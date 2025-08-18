@@ -17,7 +17,7 @@ exports.decodeAnimated = function decodeAnimated(image) {
     width,
     height,
     frames: frames.map((frame) => {
-      const { timestamp, data } = frame
+      const { width, height, timestamp, data } = frame
 
       return {
         width,
