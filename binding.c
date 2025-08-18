@@ -22,6 +22,8 @@ typedef struct {
 
   int duration;
   int timestamp;
+  int count;
+  int transparent;
 
   GIFDisposeMethod dispose;
 
@@ -30,10 +32,6 @@ typedef struct {
   GIFPicture frame;
   GIFPicture current;
   GIFPicture previous;
-
-  int count;
-
-  int transparent;
 
   bool done;
 } bare_gif_decoder_t;
@@ -71,9 +69,9 @@ bare_gif__decoder_init(js_env_t *env, bare_gif_decoder_t *decoder, const uint8_t
   decoder->file = file;
   decoder->duration = 0;
   decoder->timestamp = 0;
-  decoder->dispose = GIF_DISPOSE_NONE;
   decoder->count = 0;
   decoder->transparent = GIF_INDEX_INVALID;
+  decoder->dispose = GIF_DISPOSE_NONE;
   decoder->done = false;
 
   err = GIFPictureInit(&decoder->frame);

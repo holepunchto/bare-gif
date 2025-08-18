@@ -15,7 +15,6 @@ target_sources(
     ${giflib}/dgif_lib.c
     ${giflib}/egif_lib.c
     ${giflib}/gif_err.c
-    ${giflib}/gif_font.c
     ${giflib}/gif_hash.c
     ${giflib}/gif_hash.h
     ${giflib}/gif_lib.h
