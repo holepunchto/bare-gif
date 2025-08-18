@@ -20,6 +20,7 @@ target_sources(
     ${giflib}/gif_lib.h
     ${giflib}/gif_lib_private.h
     ${giflib}/gifalloc.c
+    ${giflib}/openbsd-reallocarray.c
 )
 
 target_include_directories(
