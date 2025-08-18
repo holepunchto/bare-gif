@@ -4,11 +4,6 @@
 
 #include "gif.h"
 
-static void
-bare_gif__on_finalize(js_env_t *env, void *data, void *finalize_hint) {
-  free(data);
-}
-
 typedef struct {
   const uint8_t *data;
   size_t len;
@@ -35,6 +30,11 @@ typedef struct {
 
   bool done;
 } bare_gif_decoder_t;
+
+static void
+bare_gif__on_finalize(js_env_t *env, void *data, void *finalize_hint) {
+  free(data);
+}
 
 static int
 bare_gif__on_read(GifFileType *gif, GifByteType *data, int len) {
@@ -255,7 +255,12 @@ bare_gif_decode(js_env_t *env, js_callback_info_t *info) {
   assert(err == 1);
 
   err = bare_gif__decoder_read_frame(env, &decoder, &picture, NULL);
-  if (err < 0) return NULL;
+
+  if (err < 0) {
+    bare_gif__decoder_destroy(env, &decoder);
+
+    return NULL;
+  }
 
   int width = picture.width;
   int height = picture.height;
@@ -330,7 +335,13 @@ bare_gif_decode_animated(js_env_t *env, js_callback_info_t *info) {
     assert(err == 1);
 
     err = bare_gif__decoder_read_frame(env, &decoder, &picture, &timestamp);
-    if (err < 0) return NULL;
+
+    if (err < 0) {
+      bare_gif__decoder_destroy(env, &decoder);
+
+      return NULL;
+    }
+
     if (err == 0) break;
 
     js_value_t *frame;
