@@ -20,6 +20,8 @@ exports.decodeAnimated = function decodeAnimated(image) {
       const { timestamp, data } = frame
 
       return {
+        width,
+        height,
         timestamp,
         data: Buffer.from(data)
       }
