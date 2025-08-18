@@ -125,6 +125,7 @@ bare_gif__decoder_read_frame(js_env_t *env, bare_gif_decoder_t *decoder, GIFPict
           file->SHeight = image->Height;
 
           if (file->SWidth <= 0 || file->SHeight <= 0) {
+            file->Error = D_GIF_ERR_IMAGE_DEFECT;
             goto err;
           }
         }
