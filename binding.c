@@ -92,7 +92,7 @@ static inline void
 bare_gif__decoder_destroy(js_env_t *env, bare_gif_decoder_t *decoder) {
   int err;
 
-  err = DGifCloseFile(decoder->file);
+  err = DGifCloseFile(decoder->file, &err);
   assert(err == GIF_OK);
 
   GIFPictureFree(&decoder->frame);

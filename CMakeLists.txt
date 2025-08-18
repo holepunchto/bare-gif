@@ -5,28 +5,28 @@ find_package(cmake-fetch REQUIRED PATHS node_modules/cmake-fetch)
 
 project(bare_gif C)
 
-fetch_package("git:git.code.sf.net/p/giflib/code#5.0.5" SOURCE_DIR giflib)
+fetch_package("git:git.code.sf.net/p/giflib/code#5.2.2" SOURCE_DIR giflib)
 
 add_library(giflib STATIC)
 
 target_sources(
   giflib
   PRIVATE
-    ${giflib}/lib/dgif_lib.c
-    ${giflib}/lib/egif_lib.c
-    ${giflib}/lib/gif_err.c
-    ${giflib}/lib/gif_font.c
-    ${giflib}/lib/gif_hash.c
-    ${giflib}/lib/gif_hash.h
-    ${giflib}/lib/gif_lib.h
-    ${giflib}/lib/gif_lib_private.h
-    ${giflib}/lib/gifalloc.c
+    ${giflib}/dgif_lib.c
+    ${giflib}/egif_lib.c
+    ${giflib}/gif_err.c
+    ${giflib}/gif_font.c
+    ${giflib}/gif_hash.c
+    ${giflib}/gif_hash.h
+    ${giflib}/gif_lib.h
+    ${giflib}/gif_lib_private.h
+    ${giflib}/gifalloc.c
 )
 
 target_include_directories(
   giflib
   PUBLIC
-    ${giflib}/lib
+    ${giflib}
 )
 
 add_bare_module(bare_gif)
