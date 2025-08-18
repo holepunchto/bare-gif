@@ -99,7 +99,7 @@ bare_gif__decoder_destroy(js_env_t *env, bare_gif_decoder_t *decoder) {
 }
 
 static inline int
-bare_gif__decoder_read_frame(js_env_t *env, bare_gif_decoder_t *decoder, GIFPicture *picture) {
+bare_gif__decoder_read_frame(js_env_t *env, bare_gif_decoder_t *decoder, GIFPicture *picture, int *timestamp) {
   int err;
 
   GifFileType *file = decoder->file;
@@ -162,6 +162,8 @@ bare_gif__decoder_read_frame(js_env_t *env, bare_gif_decoder_t *decoder, GIFPict
       if (err != 1) goto err;
 
       GIFBlendFrames(&decoder->frame, &decoder->rect, &decoder->current);
+
+      if (timestamp) *timestamp = decoder->timestamp;
 
       err = GIFPictureCopy(&decoder->current, picture);
       if (err != 1) {
@@ -252,7 +254,7 @@ bare_gif_decode(js_env_t *env, js_callback_info_t *info) {
   err = GIFPictureInit(&picture);
   assert(err == 1);
 
-  err = bare_gif__decoder_read_frame(env, &decoder, &picture);
+  err = bare_gif__decoder_read_frame(env, &decoder, &picture, NULL);
   if (err < 0) return NULL;
 
   int width = picture.width;
@@ -291,6 +293,103 @@ bare_gif_decode(js_env_t *env, js_callback_info_t *info) {
 }
 
 static js_value_t *
+bare_gif_decode_animated(js_env_t *env, js_callback_info_t *info) {
+  int err;
+
+  size_t argc = 1;
+  js_value_t *argv[1];
+
+  err = js_get_callback_info(env, info, &argc, argv, NULL, NULL);
+  assert(err == 0);
+
+  assert(argc == 1);
+
+  uint8_t *gif;
+  size_t len;
+  err = js_get_typedarray_info(env, argv[0], NULL, (void **) &gif, &len, NULL, NULL);
+  assert(err == 0);
+
+  bare_gif_decoder_t decoder;
+  err = bare_gif__decoder_init(env, &decoder, gif, len);
+  assert(err == 0);
+
+  js_value_t *result;
+  err = js_create_object(env, &result);
+  assert(err == 0);
+
+  js_value_t *frames;
+  err = js_create_array(env, &frames);
+  assert(err == 0);
+
+  int i = 0;
+  int timestamp;
+
+  while (true) {
+    GIFPicture picture;
+    err = GIFPictureInit(&picture);
+    assert(err == 1);
+
+    err = bare_gif__decoder_read_frame(env, &decoder, &picture, &timestamp);
+    if (err < 0) return NULL;
+    if (err == 0) break;
+
+    js_value_t *frame;
+    err = js_create_object(env, &frame);
+    assert(err == 0);
+
+    err = js_set_element(env, frames, i++, frame);
+    assert(err == 0);
+
+    int width = picture.width;
+    int height = picture.height;
+    uint32_t *rgba = picture.rgba;
+
+    if (decoder.count == 1) {
+#define V(n) \
+  { \
+    js_value_t *val; \
+    err = js_create_int64(env, n, &val); \
+    assert(err == 0); \
+    err = js_set_named_property(env, result, #n, val); \
+    assert(err == 0); \
+  }
+
+      V(width);
+      V(height);
+#undef V
+    }
+
+#define V(n) \
+  { \
+    js_value_t *val; \
+    err = js_create_int64(env, n, &val); \
+    assert(err == 0); \
+    err = js_set_named_property(env, frame, #n, val); \
+    assert(err == 0); \
+  }
+
+    V(timestamp);
+#undef V
+
+    len = width * height * 4;
+
+    js_value_t *buffer;
+    err = js_create_external_arraybuffer(env, rgba, len, bare_gif__on_finalize, NULL, &buffer);
+    assert(err == 0);
+
+    err = js_set_named_property(env, frame, "data", buffer);
+    assert(err == 0);
+  }
+
+  err = js_set_named_property(env, result, "frames", frames);
+  assert(err == 0);
+
+  bare_gif__decoder_destroy(env, &decoder);
+
+  return result;
+}
+
+static js_value_t *
 bare_gif_exports(js_env_t *env, js_value_t *exports) {
   int err;
 
@@ -304,6 +403,7 @@ bare_gif_exports(js_env_t *env, js_value_t *exports) {
   }
 
   V("decode", bare_gif_decode)
+  V("decodeAnimated", bare_gif_decode_animated)
 #undef V
 
   return exports;

@@ -9,3 +9,20 @@ exports.decode = function decode(image) {
     data: Buffer.from(data)
   }
 }
+
+exports.decodeAnimated = function decodeAnimated(image) {
+  const { width, height, frames } = binding.decodeAnimated(image)
+
+  return {
+    width,
+    height,
+    frames: frames.map((frame) => {
+      const { timestamp, data } = frame
+
+      return {
+        timestamp,
+        data: Buffer.from(data)
+      }
+    })
+  }
+}
