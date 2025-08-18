@@ -13,11 +13,14 @@ const gif = require('bare-gif')
 
 const image = require('./my-image.gif', { with: { type: 'binary' } })
 
-const decoded = gif.decode(image)
+const decoded = gif.decodeAnimated(image)
 // {
 //   width: 200,
 //   height: 400,
-//   data: <Buffer>
+//   frames: [
+//     { width: 200, height: 400, timestamp: 0, data: <Buffer> },
+//     ...
+//   ]
 // }
 ```
 
