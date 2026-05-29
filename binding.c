@@ -55,7 +55,7 @@ static inline int
 bare_gif__decoder_init(js_env_t *env, bare_gif_decoder_t *decoder, const uint8_t *data, size_t len) {
   int err;
 
-  decoder->reader = (bare_gif_reader_t) {data, len, 0};
+  decoder->reader = (bare_gif_reader_t){data, len, 0};
 
   GifFileType *file = DGifOpen(&decoder->reader, bare_gif__on_read, &err);
 
