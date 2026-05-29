@@ -41,6 +41,10 @@
 #define GIF_DISPOSE_MASK      0x07
 #define GIF_DISPOSE_SHIFT     2
 
+// Cap total picture size to keep attacker-controlled dimensions from reaching
+// the allocator. 1 GiB at 4 bytes per pixel covers up to a 16384x16384 canvas.
+#define GIF_MAX_PIXELS (1ULL << 28)
+
 typedef enum GIFDisposeMethod {
   GIF_DISPOSE_NONE,
   GIF_DISPOSE_BACKGROUND,
@@ -104,7 +108,12 @@ GIFPictureAlloc(GIFPicture *const picture) {
   void *argb;
   const int width = picture->width;
   const int height = picture->height;
+
+  if (width <= 0 || height <= 0) return 0;
+
   const uint64_t size = (uint64_t) width * height;
+
+  if (size > GIF_MAX_PIXELS) return 0;
 
   argb = malloc(size * sizeof(*picture->rgba));
 
@@ -127,6 +136,9 @@ GIFPictureFree(GIFPicture *picture) {
 static int
 GIFPictureView(const GIFPicture *src, int x, int y, int width, int height, GIFPicture *dst) {
   if (src == NULL || dst == NULL) return 0;
+
+  if (x < 0 || y < 0 || width <= 0 || height <= 0) return 0;
+  if (x > src->width - width || y > src->height - height) return 0;
 
   if (src != dst) *dst = *src;
 
@@ -241,17 +253,17 @@ GIFReadFrame(GifFileType *const gif, int transparent, GIFRect *const rectp, GIFP
   int err;
 
   GIFPicture view;
+  uint8_t *tmp = NULL;
 
   const GifImageDesc *const image = &gif->Image;
 
   const GIFRect rect = {image->Left, image->Top, image->Width, image->Height};
 
-  const uint64_t memory_needed = 4 * rect.width * (uint64_t) rect.height;
-
   *rectp = rect;
 
-  if (memory_needed != (size_t) memory_needed || memory_needed > (4ULL << 32)) {
-    return 0;
+  if (rect.width <= 0 || rect.height <= 0 || rect.x < 0 || rect.y < 0 || rect.x > picture->width - rect.width || rect.y > picture->height - rect.height) {
+    gif->Error = D_GIF_ERR_IMAGE_DEFECT;
+    goto err;
   }
 
   err = GIFPictureView(picture, rect.x, rect.y, rect.width, rect.height, &view);
@@ -262,7 +274,7 @@ GIFReadFrame(GifFileType *const gif, int transparent, GIFRect *const rectp, GIFP
 
   uint32_t *dst = view.rgba;
 
-  uint8_t *tmp = malloc(rect.width * sizeof(*tmp));
+  tmp = malloc(rect.width * sizeof(*tmp));
 
   if (tmp == NULL) {
     gif->Error = D_GIF_ERR_NOT_ENOUGH_MEM;
@@ -341,6 +353,10 @@ GIFBlendFrames(const GIFPicture *const src, const GIFRect *const rect, GIFPictur
   const size_t dst_stride = dst->stride;
 
   assert(src->width == dst->width && src->height == dst->height);
+
+  if (rect->width <= 0 || rect->height <= 0 || rect->x < 0 || rect->y < 0 || rect->x > src->width - rect->width || rect->y > src->height - rect->height) {
+    return;
+  }
 
   for (int j = rect->y; j < rect->y + rect->height; j++) {
     for (int i = rect->x; i < rect->x + rect->width; i++) {
