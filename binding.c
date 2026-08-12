@@ -249,7 +249,7 @@ bare_gif_decode(js_env_t *env, js_callback_info_t *info) {
 
   bare_gif_decoder_t decoder;
   err = bare_gif__decoder_init(env, &decoder, gif, len);
-  assert(err == 0);
+  if (err < 0) return NULL;
 
   GIFPicture picture;
   err = GIFPictureInit(&picture);
@@ -317,7 +317,7 @@ bare_gif_decode_animated(js_env_t *env, js_callback_info_t *info) {
 
   bare_gif_decoder_t decoder;
   err = bare_gif__decoder_init(env, &decoder, gif, len);
-  assert(err == 0);
+  if (err < 0) return NULL;
 
   js_value_t *result;
   err = js_create_object(env, &result);
