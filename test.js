@@ -64,3 +64,35 @@ test('rejects canvas dimensions that exceed the allocation cap', (t) => {
 
   t.exception(() => gif.decode(malicious), /memory/i)
 })
+
+const notAGIF = Buffer.from('this is not a gif')
+const tooShort = [Buffer.alloc(0), Buffer.from('GIF8')]
+const headerOnly = Buffer.from('GIF89a')
+
+test('decode() rejects input that is not a GIF', (t) => {
+  t.exception(() => gif.decode(notAGIF), /not in GIF format/)
+})
+
+test('decodeAnimated() rejects input that is not a GIF', (t) => {
+  t.exception(() => gif.decodeAnimated(notAGIF), /not in GIF format/)
+})
+
+test('decode() rejects a buffer too short to hold a header', (t) => {
+  for (const short of tooShort) {
+    t.exception(() => gif.decode(short), /Failed to read/)
+  }
+})
+
+test('decodeAnimated() rejects a buffer too short to hold a header', (t) => {
+  for (const short of tooShort) {
+    t.exception(() => gif.decodeAnimated(short), /Failed to read/)
+  }
+})
+
+test('decode() rejects a header with no screen descriptor', (t) => {
+  t.exception(() => gif.decode(headerOnly), /No screen descriptor/)
+})
+
+test('decodeAnimated() rejects a header with no screen descriptor', (t) => {
+  t.exception(() => gif.decodeAnimated(headerOnly), /No screen descriptor/)
+})
