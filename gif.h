@@ -45,6 +45,16 @@
 // the allocator. 1 GiB at 4 bytes per pixel covers up to a 16384x16384 canvas.
 #define GIF_MAX_PIXELS (1ULL << 28)
 
+// Cap a single frame whatever budget the caller asks for. Every frame is canvas
+// sized and the canvas is allocated three times over as the working state, so
+// 64 Mpx at 4 bytes per pixel bounds that at 768 MiB.
+#define GIF_MAX_FRAME_PIXELS (1ULL << 26)
+
+// Budget for the pixels one decode may produce in total, for callers that
+// retain what they are handed. A frame count is cheap to inflate in the file,
+// so the per-frame cap alone leaves the total unbounded.
+#define GIF_DEFAULT_MAX_PIXELS (1ULL << 26)
+
 typedef enum GIFDisposeMethod {
   GIF_DISPOSE_NONE,
   GIF_DISPOSE_BACKGROUND,

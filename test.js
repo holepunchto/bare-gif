@@ -45,6 +45,18 @@ const defectiveSecondFrame = craftGIF({
   ]
 })
 
+const frameBomb = craftGIF({
+  canvasWidth: 2000,
+  canvasHeight: 2000,
+  frames: new Array(150).fill({ width: 1, height: 1 })
+})
+
+const oversizedAnimatedCanvas = craftGIF({
+  canvasWidth: 9000,
+  canvasHeight: 9000,
+  frames: [{ width: 1, height: 1 }]
+})
+
 const badExtension = craftGIF({
   canvasWidth: 1,
   canvasHeight: 1,
@@ -68,12 +80,31 @@ test('decode animated .gif', (t) => {
   }
 })
 
+test('decodeAnimated() yields frames lazily', (t) => {
+  const decoded = gif.decodeAnimated(bufferfly)
+
+  t.is(typeof decoded.frames.next, 'function')
+  t.is(decoded.frames[Symbol.iterator](), decoded.frames)
+
+  const first = decoded.frames.next()
+
+  t.is(first.done, false)
+  t.is(first.value.data.byteLength, decoded.width * decoded.height * 4)
+})
+
+test('decodeAnimated() is exhausted after the last frame', (t) => {
+  const decoded = gif.decodeAnimated(bufferfly)
+
+  t.is([...decoded.frames].length, 22)
+  t.is(decoded.frames.next().done, true)
+})
+
 test('rejects frame rect that exceeds the canvas', (t) => {
   t.exception(() => gif.decode(oversizedFrame), /defective/i)
 })
 
-test('rejects canvas dimensions that exceed the allocation cap', (t) => {
-  t.exception(() => gif.decode(oversizedCanvas), /memory/i)
+test('rejects canvas dimensions that exceed the per-frame cap', (t) => {
+  t.exception(() => gif.decode(oversizedCanvas), /dimensions exceed maximum/)
 })
 
 test('decode() adopts the frame size when the canvas is 0x0', (t) => {
@@ -88,7 +119,7 @@ test('decodeAnimated() adopts the frame size when the canvas is 0x0', (t) => {
 
   t.is(decoded.width, 1)
   t.is(decoded.height, 1)
-  t.is(decoded.frames.length, 1)
+  t.is([...decoded.frames].length, 1)
 })
 
 test('decode() rejects a 0x0 canvas with a 0x0 frame', (t) => {
@@ -107,8 +138,57 @@ test('decodeAnimated() rejects a 0x0 frame rect', (t) => {
   t.exception(() => gif.decodeAnimated(emptyFrame), /bigger than width \* height/)
 })
 
+test('decodeAnimated() rejects an animation that exceeds the total pixel budget', (t) => {
+  t.exception(() => [...gif.decodeAnimated(frameBomb).frames], /exceeds maximum decoded size/)
+})
+
+test('decodeAnimated() streams past the budget when it is lifted', (t) => {
+  const { frames } = gif.decodeAnimated(frameBomb, { maxPixels: 0 })
+
+  let count = 0
+
+  for (const frame of frames) {
+    t.is(frame.data.byteLength, 2000 * 2000 * 4)
+    count++
+  }
+
+  t.is(count, 150)
+})
+
+test('decodeAnimated() still bounds a single frame when the budget is lifted', (t) => {
+  t.exception(
+    () => [...gif.decodeAnimated(oversizedAnimatedCanvas, { maxPixels: 0 }).frames],
+    /dimensions exceed maximum/
+  )
+})
+
+test('decodeAnimated() honours a budget below the default', (t) => {
+  const { frames } = gif.decodeAnimated(frameBomb, { maxPixels: 2000 * 2000 * 2 })
+
+  let count = 0
+
+  t.exception(() => {
+    for (const frame of frames) count++
+  }, /exceeds maximum decoded size/)
+
+  t.is(count, 2)
+})
+
+test('decodeAnimated() stays within the budget when iteration stops early', (t) => {
+  const { frames } = gif.decodeAnimated(frameBomb)
+
+  const taken = []
+
+  for (const frame of frames) {
+    taken.push(frame)
+    if (taken.length === 3) break
+  }
+
+  t.is(taken.length, 3)
+})
+
 test('decodeAnimated() rejects a defective frame after the first', (t) => {
-  t.exception(() => gif.decodeAnimated(defectiveSecondFrame), /defective/i)
+  t.exception(() => [...gif.decodeAnimated(defectiveSecondFrame).frames], /defective/i)
 })
 
 test('decode() stops at the first frame and ignores a later defective one', (t) => {

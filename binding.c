@@ -20,6 +20,9 @@ typedef struct {
   int count;
   int transparent;
 
+  uint64_t pixels;
+  int64_t max_pixels;
+
   GIFDisposeMethod dispose;
 
   GIFRect rect;
@@ -27,6 +30,10 @@ typedef struct {
   GIFPicture frame;
   GIFPicture current;
   GIFPicture previous;
+
+  GIFPicture pending;
+  int pending_timestamp;
+  bool has_pending;
 
   bool done;
 } bare_gif_decoder_t;
@@ -52,7 +59,7 @@ bare_gif__on_read(GifFileType *gif, GifByteType *data, int len) {
 }
 
 static inline int
-bare_gif__decoder_init(js_env_t *env, bare_gif_decoder_t *decoder, const uint8_t *data, size_t len) {
+bare_gif__decoder_init(js_env_t *env, bare_gif_decoder_t *decoder, const uint8_t *data, size_t len, int64_t max_pixels) {
   int err;
 
   decoder->reader = (bare_gif_reader_t){data, len, 0};
@@ -71,7 +78,11 @@ bare_gif__decoder_init(js_env_t *env, bare_gif_decoder_t *decoder, const uint8_t
   decoder->timestamp = 0;
   decoder->count = 0;
   decoder->transparent = GIF_INDEX_INVALID;
+  decoder->pixels = 0;
+  decoder->max_pixels = max_pixels;
   decoder->dispose = GIF_DISPOSE_NONE;
+  decoder->has_pending = false;
+  decoder->pending_timestamp = 0;
   decoder->done = false;
 
   err = GIFPictureInit(&decoder->frame);
@@ -81,6 +92,9 @@ bare_gif__decoder_init(js_env_t *env, bare_gif_decoder_t *decoder, const uint8_t
   assert(err == 1);
 
   err = GIFPictureInit(&decoder->previous);
+  assert(err == 1);
+
+  err = GIFPictureInit(&decoder->pending);
   assert(err == 1);
 
   return 0;
@@ -96,6 +110,7 @@ bare_gif__decoder_destroy(js_env_t *env, bare_gif_decoder_t *decoder) {
   GIFPictureFree(&decoder->frame);
   GIFPictureFree(&decoder->current);
   GIFPictureFree(&decoder->previous);
+  GIFPictureFree(&decoder->pending);
 }
 
 static inline int
@@ -103,6 +118,8 @@ bare_gif__decoder_read_frame(js_env_t *env, bare_gif_decoder_t *decoder, GIFPict
   int err;
 
   GifFileType *file = decoder->file;
+
+  if (decoder->done) return 0;
 
   while (!decoder->done) {
     GifRecordType type;
@@ -132,6 +149,13 @@ bare_gif__decoder_read_frame(js_env_t *env, bare_gif_decoder_t *decoder, GIFPict
 
         decoder->frame.width = file->SWidth;
         decoder->frame.height = file->SHeight;
+
+        if ((uint64_t) file->SWidth * file->SHeight > GIF_MAX_FRAME_PIXELS) {
+          err = js_throw_error(env, NULL, "GIF dimensions exceed maximum");
+          assert(err == 0);
+
+          return -1;
+        }
 
         err = GIFPictureAlloc(&decoder->frame);
         if (err != 1) {
@@ -165,6 +189,15 @@ bare_gif__decoder_read_frame(js_env_t *env, bare_gif_decoder_t *decoder, GIFPict
       GIFBlendFrames(&decoder->frame, &decoder->rect, &decoder->current);
 
       if (timestamp) *timestamp = decoder->timestamp;
+
+      decoder->pixels += (uint64_t) decoder->current.width * decoder->current.height;
+
+      if (decoder->max_pixels > 0 && decoder->pixels > (uint64_t) decoder->max_pixels) {
+        err = js_throw_error(env, NULL, "GIF exceeds maximum decoded size");
+        assert(err == 0);
+
+        return -1;
+      }
 
       err = GIFPictureCopy(&decoder->current, picture);
       if (err != 1) {
@@ -248,7 +281,7 @@ bare_gif_decode(js_env_t *env, js_callback_info_t *info) {
   assert(err == 0);
 
   bare_gif_decoder_t decoder;
-  err = bare_gif__decoder_init(env, &decoder, gif, len);
+  err = bare_gif__decoder_init(env, &decoder, gif, len, 0);
   if (err < 0) return NULL;
 
   GIFPicture picture;
@@ -298,8 +331,70 @@ bare_gif_decode(js_env_t *env, js_callback_info_t *info) {
   return result;
 }
 
+static void
+bare_gif__on_finalize_decoder(js_env_t *env, void *data, void *finalize_hint) {
+  bare_gif_decoder_t *decoder = (bare_gif_decoder_t *) data;
+
+  bare_gif__decoder_destroy(env, decoder);
+
+  free(decoder);
+}
+
 static js_value_t *
-bare_gif_decode_animated(js_env_t *env, js_callback_info_t *info) {
+bare_gif_animated_decoder_init(js_env_t *env, js_callback_info_t *info) {
+  int err;
+
+  size_t argc = 2;
+  js_value_t *argv[2];
+
+  err = js_get_callback_info(env, info, &argc, argv, NULL, NULL);
+  assert(err == 0);
+
+  assert(argc == 2);
+
+  uint8_t *gif;
+  size_t len;
+  err = js_get_typedarray_info(env, argv[0], NULL, (void **) &gif, &len, NULL, NULL);
+  assert(err == 0);
+
+  int64_t max_pixels = 0;
+  err = js_get_value_int64(env, argv[1], &max_pixels);
+  assert(err == 0);
+
+  bare_gif_decoder_t *decoder = malloc(sizeof(bare_gif_decoder_t));
+  assert(decoder != NULL);
+
+  err = bare_gif__decoder_init(env, decoder, gif, len, max_pixels);
+
+  if (err < 0) {
+    free(decoder);
+
+    return NULL;
+  }
+
+  // The canvas size is only known once a frame has been read, as a screen
+  // descriptor of 0x0 adopts the size of the first frame.
+  err = bare_gif__decoder_read_frame(env, decoder, &decoder->pending, &decoder->pending_timestamp);
+
+  if (err < 0) {
+    bare_gif__decoder_destroy(env, decoder);
+
+    free(decoder);
+
+    return NULL;
+  }
+
+  decoder->has_pending = err == 1;
+
+  js_value_t *result;
+  err = js_create_external(env, (void *) decoder, bare_gif__on_finalize_decoder, NULL, &result);
+  assert(err == 0);
+
+  return result;
+}
+
+static js_value_t *
+bare_gif_animated_decoder_get_info(js_env_t *env, js_callback_info_t *info) {
   int err;
 
   size_t argc = 1;
@@ -310,83 +405,16 @@ bare_gif_decode_animated(js_env_t *env, js_callback_info_t *info) {
 
   assert(argc == 1);
 
-  uint8_t *gif;
-  size_t len;
-  err = js_get_typedarray_info(env, argv[0], NULL, (void **) &gif, &len, NULL, NULL);
+  bare_gif_decoder_t *decoder;
+  err = js_get_value_external(env, argv[0], (void **) &decoder);
   assert(err == 0);
 
-  bare_gif_decoder_t decoder;
-  err = bare_gif__decoder_init(env, &decoder, gif, len);
-  if (err < 0) return NULL;
+  int width = decoder->frame.width;
+  int height = decoder->frame.height;
 
   js_value_t *result;
   err = js_create_object(env, &result);
   assert(err == 0);
-
-  js_value_t *frames;
-  err = js_create_array(env, &frames);
-  assert(err == 0);
-
-  err = js_set_named_property(env, result, "frames", frames);
-  assert(err == 0);
-
-  int i = 0;
-  int timestamp;
-
-  while (true) {
-    GIFPicture picture;
-    err = GIFPictureInit(&picture);
-    assert(err == 1);
-
-    err = bare_gif__decoder_read_frame(env, &decoder, &picture, &timestamp);
-
-    if (err < 0) {
-      bare_gif__decoder_destroy(env, &decoder);
-
-      return NULL;
-    }
-
-    if (err == 0) break;
-
-    js_value_t *frame;
-    err = js_create_object(env, &frame);
-    assert(err == 0);
-
-    err = js_set_element(env, frames, i++, frame);
-    assert(err == 0);
-
-    int width = picture.width;
-    int height = picture.height;
-    uint32_t *rgba = picture.rgba;
-
-#define V(n) \
-  { \
-    js_value_t *val; \
-    err = js_create_int64(env, n, &val); \
-    assert(err == 0); \
-    err = js_set_named_property(env, frame, #n, val); \
-    assert(err == 0); \
-  }
-
-    V(width);
-    V(height);
-    V(timestamp);
-#undef V
-
-    len = width * height * 4;
-
-    js_value_t *buffer;
-    err = js_create_external_arraybuffer(env, rgba, len, bare_gif__on_finalize, NULL, &buffer);
-    assert(err == 0);
-
-    err = js_set_named_property(env, frame, "data", buffer);
-    assert(err == 0);
-  }
-
-  GIFPicture frame = decoder.frame;
-
-  int width = frame.width;
-  int height = frame.height;
 
 #define V(n) \
   { \
@@ -401,7 +429,68 @@ bare_gif_decode_animated(js_env_t *env, js_callback_info_t *info) {
   V(height);
 #undef V
 
-  bare_gif__decoder_destroy(env, &decoder);
+  return result;
+}
+
+static js_value_t *
+bare_gif_animated_decoder_get_next_frame(js_env_t *env, js_callback_info_t *info) {
+  int err;
+
+  size_t argc = 2;
+  js_value_t *argv[2];
+
+  err = js_get_callback_info(env, info, &argc, argv, NULL, NULL);
+  assert(err == 0);
+
+  assert(argc == 2);
+
+  bare_gif_decoder_t *decoder;
+  err = js_get_value_external(env, argv[0], (void **) &decoder);
+  assert(err == 0);
+
+  GIFPicture picture;
+  int timestamp;
+
+  if (decoder->has_pending) {
+    picture = decoder->pending;
+    timestamp = decoder->pending_timestamp;
+
+    decoder->has_pending = false;
+    decoder->pending.rgba = NULL;
+  } else {
+    err = GIFPictureInit(&picture);
+    assert(err == 1);
+
+    err = bare_gif__decoder_read_frame(env, decoder, &picture, &timestamp);
+
+    if (err < 0) return NULL;
+
+    if (err == 0) {
+      js_value_t *result;
+      err = js_get_null(env, &result);
+      assert(err == 0);
+
+      return result;
+    }
+  }
+
+  js_value_t *result;
+  err = js_create_object(env, &result);
+  assert(err == 0);
+
+  js_value_t *value;
+  err = js_create_int64(env, timestamp, &value);
+  assert(err == 0);
+
+  err = js_set_named_property(env, result, "timestamp", value);
+  assert(err == 0);
+
+  js_value_t *buffer;
+  err = js_create_external_arraybuffer(env, picture.rgba, (size_t) picture.width * picture.height * 4, bare_gif__on_finalize, NULL, &buffer);
+  assert(err == 0);
+
+  err = js_set_named_property(env, result, "data", buffer);
+  assert(err == 0);
 
   return result;
 }
@@ -420,8 +509,17 @@ bare_gif_exports(js_env_t *env, js_value_t *exports) {
   }
 
   V("decode", bare_gif_decode)
-  V("decodeAnimated", bare_gif_decode_animated)
+  V("animatedDecoderInit", bare_gif_animated_decoder_init)
+  V("animatedDecoderGetInfo", bare_gif_animated_decoder_get_info)
+  V("animatedDecoderGetNextFrame", bare_gif_animated_decoder_get_next_frame)
 #undef V
+
+  js_value_t *max_pixels;
+  err = js_create_int64(env, GIF_DEFAULT_MAX_PIXELS, &max_pixels);
+  assert(err == 0);
+
+  err = js_set_named_property(env, exports, "defaultMaxPixels", max_pixels);
+  assert(err == 0);
 
   return exports;
 }
