@@ -10,21 +10,47 @@ exports.decode = function decode(image) {
   }
 }
 
-exports.decodeAnimated = function decodeAnimated(image) {
-  const { width, height, frames } = binding.decodeAnimated(image)
+exports.decodeAnimated = function decodeAnimated(image, opts = {}) {
+  const { maxPixels = binding.defaultMaxPixels } = opts
+
+  const decoder = binding.animatedDecoderInit(image, maxPixels)
+
+  const { width, height } = binding.animatedDecoderGetInfo(decoder)
+
+  const frames = {
+    next() {
+      const frame = binding.animatedDecoderGetNextFrame(
+        decoder,
+        image // Keep a reference for lifetime management
+      )
+
+      if (frame === null) {
+        return {
+          done: true
+        }
+      }
+
+      const { timestamp, data } = frame
+
+      return {
+        done: false,
+        value: {
+          width,
+          height,
+          timestamp,
+          data: Buffer.from(data)
+        }
+      }
+    },
+
+    [Symbol.iterator]() {
+      return frames
+    }
+  }
 
   return {
     width,
     height,
-    frames: frames.map((frame) => {
-      const { width, height, timestamp, data } = frame
-
-      return {
-        width,
-        height,
-        timestamp,
-        data: Buffer.from(data)
-      }
-    })
+    frames
   }
 }
