@@ -48,5 +48,3 @@ jobs:
           arch: ${{ matrix.arch }}
           flags: --debug ${{ matrix.flags }}
       - run: npm test
-        env:
-          LSAN_OPTIONS: suppressions=test/leaks.txt
