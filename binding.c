@@ -1,5 +1,5 @@
 #include <assert.h>
-#include <bare.h>
+#include <bare/module.h>
 #include <js.h>
 
 #include "gif.h"
@@ -446,6 +446,11 @@ bare_gif_animated_decoder_get_next_frame(js_env_t *env, js_callback_info_t *info
 
   bare_gif_decoder_t *decoder;
   err = js_get_value_external(env, argv[0], (void **) &decoder);
+  assert(err == 0);
+
+  // The data of a typed array is only guaranteed to stay at the same address
+  // for the duration of a call, so the reader is pointed at it again.
+  err = js_get_typedarray_info(env, argv[1], NULL, (void **) &decoder->reader.data, NULL, NULL, NULL);
   assert(err == 0);
 
   GIFPicture picture;
