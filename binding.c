@@ -517,61 +517,12 @@ typedef struct {
 
   // A frame is only written once the next one gives away how long it was shown
   // for, so one frame is always held back.
-  uint8_t *pending;
-  ColorMapObject *pending_map;
-  int pending_transparent;
+  GIFQuantized pending;
   int pending_timestamp;
   bool has_pending;
 
   int delay;
 } bare_gif_encoder_t;
-
-static inline int
-bare_gif__quantize(js_env_t *env, const uint8_t *data, int64_t width, int64_t height, int64_t colors, uint8_t **result, ColorMapObject **result_map, int *transparent) {
-  int err;
-
-  const uint64_t pixels = (uint64_t) width * (uint64_t) height;
-
-  const GIFPicture picture = {(int) width, (int) height, (uint32_t *) data, (int) width};
-
-  GIFPalette palette;
-
-  if (GIFPaletteInit(&palette) != 1) {
-    err = js_throw_error(env, NULL, "Out of memory");
-    assert(err == 0);
-
-    return -1;
-  }
-
-  GIFPaletteSample(&palette, &picture);
-  GIFPaletteBuild(&palette, (int) colors);
-
-  uint8_t *indices = malloc(pixels);
-  ColorMapObject *map = GIFPaletteToMap(&palette);
-
-  if (indices == NULL || map == NULL) {
-    free(indices);
-
-    if (map) GifFreeMapObject(map);
-
-    GIFPaletteFree(&palette);
-
-    err = js_throw_error(env, NULL, "Out of memory");
-    assert(err == 0);
-
-    return -1;
-  }
-
-  GIFPaletteMap(&palette, &picture, indices);
-
-  *result = indices;
-  *result_map = map;
-  *transparent = palette.transparent;
-
-  GIFPaletteFree(&palette);
-
-  return 0;
-}
 
 static js_value_t *
 bare_gif_encode(js_env_t *env, js_callback_info_t *info) {
@@ -601,13 +552,16 @@ bare_gif_encode(js_env_t *env, js_callback_info_t *info) {
   err = js_get_value_int64(env, argv[3], &colors);
   assert(err == 0);
 
-  uint8_t *indices;
-  ColorMapObject *map;
-  int transparent;
+  const GIFPicture picture = {(int) width, (int) height, (uint32_t *) data, (int) width};
 
-  err = bare_gif__quantize(env, data, width, height, colors, &indices, &map, &transparent);
+  GIFQuantized quantized;
 
-  if (err < 0) return NULL;
+  if (GIFQuantize(&picture, (int) colors, &quantized) != 1) {
+    err = js_throw_error(env, NULL, "Out of memory");
+    assert(err == 0);
+
+    return NULL;
+  }
 
   GIFBuffer buffer;
   GIFBufferInit(&buffer);
@@ -616,11 +570,11 @@ bare_gif_encode(js_env_t *env, js_callback_info_t *info) {
 
   if (file == NULL) goto err;
 
-  if (EGifPutScreenDesc(file, (int) width, (int) height, 8, 0, map) == GIF_ERROR) goto err;
+  if (EGifPutScreenDesc(file, (int) width, (int) height, 8, 0, quantized.map) == GIF_ERROR) goto err;
 
   // The colour map is already on the screen descriptor, so the image does not
   // repeat it.
-  if (GIFWriteFrame(file, indices, (int) width, (int) height, 0, transparent, NULL) != 1) goto err;
+  if (GIFWriteFrame(file, quantized.indices, (int) width, (int) height, 0, quantized.transparent, NULL) != 1) goto err;
 
   if (EGifCloseFile(file, &err) == GIF_ERROR) {
     file = NULL;
@@ -628,8 +582,7 @@ bare_gif_encode(js_env_t *env, js_callback_info_t *info) {
     goto err;
   }
 
-  free(indices);
-  GifFreeMapObject(map);
+  GIFQuantizedFree(&quantized);
 
   js_value_t *result;
   err = js_create_external_arraybuffer(env, buffer.data, buffer.len, bare_gif__on_finalize, NULL, &result);
@@ -642,8 +595,7 @@ err: {
 
   if (file) EGifCloseFile(file, &err);
 
-  free(indices);
-  GifFreeMapObject(map);
+  GIFQuantizedFree(&quantized);
   GIFBufferFree(&buffer);
 
   err = js_throw_error(env, NULL, message);
@@ -655,12 +607,8 @@ err: {
 
 static inline void
 bare_gif__encoder_drop_pending(bare_gif_encoder_t *encoder) {
-  free(encoder->pending);
+  GIFQuantizedFree(&encoder->pending);
 
-  if (encoder->pending_map) GifFreeMapObject(encoder->pending_map);
-
-  encoder->pending = NULL;
-  encoder->pending_map = NULL;
   encoder->has_pending = false;
 }
 
@@ -668,7 +616,7 @@ static inline int
 bare_gif__encoder_flush_pending(bare_gif_encoder_t *encoder, int delay) {
   if (!encoder->has_pending) return 1;
 
-  const int ok = GIFWriteFrame(encoder->file, encoder->pending, encoder->width, encoder->height, delay, encoder->pending_transparent, encoder->pending_map);
+  const int ok = GIFWriteFrame(encoder->file, encoder->pending.indices, encoder->width, encoder->height, delay, encoder->pending.transparent, encoder->pending.map);
 
   bare_gif__encoder_drop_pending(encoder);
 
@@ -721,7 +669,7 @@ bare_gif_animated_encoder_init(js_env_t *env, js_callback_info_t *info) {
 
   encoder->width = (int) width;
   encoder->height = (int) height;
-  encoder->pending_transparent = GIF_INDEX_INVALID;
+  encoder->pending.transparent = GIF_INDEX_INVALID;
 
   GIFBufferInit(&encoder->buffer);
 
@@ -799,13 +747,16 @@ bare_gif_animated_encoder_add_frame(js_env_t *env, js_callback_info_t *info) {
   err = js_get_value_int64(env, argv[5], &timestamp);
   assert(err == 0);
 
-  uint8_t *indices;
-  ColorMapObject *map;
-  int transparent;
+  const GIFPicture picture = {(int) width, (int) height, (uint32_t *) data, (int) width};
 
-  err = bare_gif__quantize(env, data, width, height, colors, &indices, &map, &transparent);
+  GIFQuantized quantized;
 
-  if (err < 0) return NULL;
+  if (GIFQuantize(&picture, (int) colors, &quantized) != 1) {
+    err = js_throw_error(env, NULL, "Out of memory");
+    assert(err == 0);
+
+    return NULL;
+  }
 
   if (encoder->has_pending) {
     // GIF measures a delay in hundredths of a second.
@@ -816,8 +767,7 @@ bare_gif_animated_encoder_add_frame(js_env_t *env, js_callback_info_t *info) {
     encoder->delay = delay;
 
     if (bare_gif__encoder_flush_pending(encoder, delay) != 1) {
-      free(indices);
-      GifFreeMapObject(map);
+      GIFQuantizedFree(&quantized);
 
       err = js_throw_error(env, NULL, GIFGetError(encoder->file, 0));
       assert(err == 0);
@@ -826,9 +776,7 @@ bare_gif_animated_encoder_add_frame(js_env_t *env, js_callback_info_t *info) {
     }
   }
 
-  encoder->pending = indices;
-  encoder->pending_map = map;
-  encoder->pending_transparent = transparent;
+  encoder->pending = quantized;
   encoder->pending_timestamp = (int) timestamp;
   encoder->has_pending = true;
 

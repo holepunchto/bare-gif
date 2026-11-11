@@ -58,12 +58,6 @@
 // A GIF pixel is an index into a colour map of at most 256 entries.
 #define GIF_MAX_COLORS 256
 
-// Colours are bucketed to 5 bits per channel before the palette is cut. 32768
-// buckets keep the histogram at half a megabyte and the error below what the
-// 256 entry palette costs anyway.
-#define GIF_QUANTIZE_BITS 5
-#define GIF_QUANTIZE_SIZE (1 << (3 * GIF_QUANTIZE_BITS))
-
 // A GIF has no alpha channel, only a fully transparent palette index.
 #define GIF_ALPHA_THRESHOLD 128
 
@@ -451,311 +445,153 @@ GIFBufferWrite(GIFBuffer *const buffer, const uint8_t *const data, size_t len) {
   return 1;
 }
 
-typedef struct {
-  uint32_t count;
-  uint32_t red, green, blue;
-} GIFColorCell;
+// giflib still ships and maintains its quantizer, it just keeps it out of the
+// public header.
+int
+GifQuantizeBuffer(unsigned int width, unsigned int height, int *color_map_size, const GifByteType *red, const GifByteType *green, const GifByteType *blue, GifByteType *output, GifColorType *color_map);
 
 typedef struct {
-  int begin, end;
-} GIFColorBox;
-
-typedef struct {
-  GIFColorCell *cells;
-
-  uint16_t *keys;
-  uint16_t *scratch;
-  int key_count;
-
-  GifColorType colors[GIF_MAX_COLORS];
-  int color_count;
-
-  // A GIF pixel is either opaque or fully transparent, so the alpha channel
-  // collapses onto a single reserved palette index.
-  bool transparency;
+  GifByteType *indices;
+  ColorMapObject *map;
   int transparent;
-
-  uint8_t lookup[GIF_QUANTIZE_SIZE];
-} GIFPalette;
-
-static inline int
-GIFQuantizeKey(const GIFPixel *const pixel) {
-  return ((pixel->red >> (8 - GIF_QUANTIZE_BITS)) << (2 * GIF_QUANTIZE_BITS)) | ((pixel->green >> (8 - GIF_QUANTIZE_BITS)) << GIF_QUANTIZE_BITS) | (pixel->blue >> (8 - GIF_QUANTIZE_BITS));
-}
+} GIFQuantized;
 
 static void
-GIFPaletteFree(GIFPalette *const palette);
+GIFQuantizedFree(GIFQuantized *const quantized) {
+  free(quantized->indices);
+
+  if (quantized->map) GifFreeMapObject(quantized->map);
+
+  quantized->indices = NULL;
+  quantized->map = NULL;
+}
+
+// giflib averages the 5 bit buckets it sorts on, so every channel lands on a
+// multiple of 8 and pure white comes back as 0xf8. The boxes it picked are
+// right, only the colour it names them is rounded, so average the real pixels.
+static void
+GIFRefinePalette(const GIFPicture *const picture, const GifByteType *const indices, int size, GifColorType *const palette) {
+  uint64_t sums[GIF_MAX_COLORS][3] = {{0}};
+  uint64_t counts[GIF_MAX_COLORS] = {0};
+
+  for (int y = 0; y < picture->height; y++) {
+    const uint32_t *const row = picture->rgba + (size_t) y * picture->stride;
+
+    for (int x = 0; x < picture->width; x++) {
+      const GIFPixel *const pixel = (const GIFPixel *) &row[x];
+
+      if (pixel->alpha < GIF_ALPHA_THRESHOLD) continue;
+
+      const int index = indices[(size_t) y * picture->width + x];
+
+      sums[index][0] += pixel->red;
+      sums[index][1] += pixel->green;
+      sums[index][2] += pixel->blue;
+
+      counts[index]++;
+    }
+  }
+
+  for (int i = 0; i < size; i++) {
+    if (counts[i] == 0) continue;
+
+    palette[i].Red = (GifByteType) (sums[i][0] / counts[i]);
+    palette[i].Green = (GifByteType) (sums[i][1] / counts[i]);
+    palette[i].Blue = (GifByteType) (sums[i][2] / counts[i]);
+  }
+}
 
 static int
-GIFPaletteInit(GIFPalette *const palette) {
-  memset(palette, 0, sizeof(*palette));
+GIFQuantize(const GIFPicture *const picture, int colors, GIFQuantized *const quantized) {
+  const size_t pixels = (size_t) picture->width * (size_t) picture->height;
 
-  palette->transparent = GIF_INDEX_INVALID;
+  memset(quantized, 0, sizeof(*quantized));
 
-  palette->cells = calloc(GIF_QUANTIZE_SIZE, sizeof(*palette->cells));
-  palette->keys = malloc(GIF_QUANTIZE_SIZE * sizeof(*palette->keys));
-  palette->scratch = malloc(GIF_QUANTIZE_SIZE * sizeof(*palette->scratch));
+  quantized->transparent = GIF_INDEX_INVALID;
 
-  if (palette->cells == NULL || palette->keys == NULL || palette->scratch == NULL) {
-    GIFPaletteFree(palette);
+  // The quantizer reads one plane per channel, the picture holds them
+  // interleaved.
+  GifByteType *planes = malloc(3 * pixels);
+  GifByteType *indices = malloc(pixels);
+
+  if (planes == NULL || indices == NULL) {
+    free(planes);
+    free(indices);
 
     return 0;
   }
 
+  GifByteType *const red = planes;
+  GifByteType *const green = planes + pixels;
+  GifByteType *const blue = planes + 2 * pixels;
+
+  bool transparency = false;
+
+  for (int y = 0; y < picture->height; y++) {
+    const uint32_t *const row = picture->rgba + (size_t) y * picture->stride;
+
+    for (int x = 0; x < picture->width; x++) {
+      const GIFPixel *const pixel = (const GIFPixel *) &row[x];
+
+      const size_t i = (size_t) y * picture->width + x;
+
+      red[i] = pixel->red;
+      green[i] = pixel->green;
+      blue[i] = pixel->blue;
+
+      if (pixel->alpha < GIF_ALPHA_THRESHOLD) transparency = true;
+    }
+  }
+
+  // A GIF has no alpha channel, only an index that reads as transparent, so
+  // transparency costs one of the colours.
+  int size = transparency ? colors - 1 : colors;
+
+  if (size < 1) size = 1;
+
+  GifColorType palette[GIF_MAX_COLORS];
+
+  const int err = GifQuantizeBuffer((unsigned int) picture->width, (unsigned int) picture->height, &size, red, green, blue, indices, palette);
+
+  free(planes);
+
+  if (err == GIF_ERROR) {
+    free(indices);
+
+    return 0;
+  }
+
+  GIFRefinePalette(picture, indices, size, palette);
+
+  if (transparency) {
+    for (int y = 0; y < picture->height; y++) {
+      const uint32_t *const row = picture->rgba + (size_t) y * picture->stride;
+
+      for (int x = 0; x < picture->width; x++) {
+        const GIFPixel *const pixel = (const GIFPixel *) &row[x];
+
+        if (pixel->alpha < GIF_ALPHA_THRESHOLD) indices[(size_t) y * picture->width + x] = (GifByteType) size;
+      }
+    }
+
+    quantized->transparent = size;
+  }
+
+  // A colour map holds a power of two entries, and the transparent index sits
+  // past the colours the quantizer settled on.
+  quantized->map = GifMakeMapObject(1 << GifBitSize(size + (transparency ? 1 : 0)), NULL);
+
+  if (quantized->map == NULL) {
+    free(indices);
+
+    return 0;
+  }
+
+  memcpy(quantized->map->Colors, palette, (size_t) size * sizeof(*palette));
+
+  quantized->indices = indices;
+
   return 1;
-}
-
-static void
-GIFPaletteFree(GIFPalette *const palette) {
-  free(palette->cells);
-  free(palette->keys);
-  free(palette->scratch);
-
-  palette->cells = NULL;
-  palette->keys = NULL;
-  palette->scratch = NULL;
-}
-
-static void
-GIFPaletteSample(GIFPalette *const palette, const GIFPicture *const picture) {
-  for (int y = 0; y < picture->height; y++) {
-    const uint32_t *const row = picture->rgba + (size_t) y * picture->stride;
-
-    for (int x = 0; x < picture->width; x++) {
-      const GIFPixel *const pixel = (const GIFPixel *) &row[x];
-
-      if (pixel->alpha < GIF_ALPHA_THRESHOLD) {
-        palette->transparency = true;
-
-        continue;
-      }
-
-      GIFColorCell *const cell = &palette->cells[GIFQuantizeKey(pixel)];
-
-      cell->count++;
-      cell->red += pixel->red;
-      cell->green += pixel->green;
-      cell->blue += pixel->blue;
-    }
-  }
-}
-
-static int
-GIFColorBoxWidest(const GIFPalette *const palette, const GIFColorBox *const box, int *const shift) {
-  const int mask = (1 << GIF_QUANTIZE_BITS) - 1;
-
-  int widest = 0;
-
-  for (int channel = 0; channel < 3; channel++) {
-    const int bits = (2 - channel) * GIF_QUANTIZE_BITS;
-
-    int low = mask;
-    int high = 0;
-
-    for (int i = box->begin; i < box->end; i++) {
-      const int value = (palette->keys[i] >> bits) & mask;
-
-      if (value < low) low = value;
-      if (value > high) high = value;
-    }
-
-    if (high - low > widest) {
-      widest = high - low;
-
-      *shift = bits;
-    }
-  }
-
-  return widest;
-}
-
-static void
-GIFColorBoxSort(GIFPalette *const palette, const GIFColorBox *const box, int shift) {
-  const int mask = (1 << GIF_QUANTIZE_BITS) - 1;
-
-  int offsets[1 << GIF_QUANTIZE_BITS] = {0};
-
-  for (int i = box->begin; i < box->end; i++) {
-    offsets[(palette->keys[i] >> shift) & mask]++;
-  }
-
-  int offset = box->begin;
-
-  for (int value = 0; value <= mask; value++) {
-    const int count = offsets[value];
-
-    offsets[value] = offset;
-
-    offset += count;
-  }
-
-  memcpy(palette->scratch + box->begin, palette->keys + box->begin, (size_t) (box->end - box->begin) * sizeof(*palette->keys));
-
-  for (int i = box->begin; i < box->end; i++) {
-    const uint16_t key = palette->scratch[i];
-
-    palette->keys[offsets[(key >> shift) & mask]++] = key;
-  }
-}
-
-// Split where the two halves carry the same number of pixels, so that colours
-// get spent on the areas of the image that use them.
-static int
-GIFColorBoxSplit(const GIFPalette *const palette, const GIFColorBox *const box) {
-  uint64_t total = 0;
-
-  for (int i = box->begin; i < box->end; i++) {
-    total += palette->cells[palette->keys[i]].count;
-  }
-
-  uint64_t seen = 0;
-
-  for (int i = box->begin; i < box->end - 1; i++) {
-    seen += palette->cells[palette->keys[i]].count;
-
-    if (seen * 2 >= total) return i + 1;
-  }
-
-  return box->end - 1;
-}
-
-static void
-GIFPaletteResolve(GIFPalette *const palette) {
-  for (int i = 0; i < palette->key_count; i++) {
-    const int key = palette->keys[i];
-
-    const GIFColorCell *const cell = &palette->cells[key];
-
-    const int red = (int) (cell->red / cell->count);
-    const int green = (int) (cell->green / cell->count);
-    const int blue = (int) (cell->blue / cell->count);
-
-    int64_t nearest = -1;
-    int best = 0;
-
-    for (int j = 0; j < palette->color_count; j++) {
-      const int dr = red - palette->colors[j].Red;
-      const int dg = green - palette->colors[j].Green;
-      const int db = blue - palette->colors[j].Blue;
-
-      const int64_t distance = (int64_t) dr * dr + (int64_t) dg * dg + (int64_t) db * db;
-
-      if (nearest < 0 || distance < nearest) {
-        nearest = distance;
-        best = j;
-      }
-    }
-
-    palette->lookup[key] = (uint8_t) best;
-  }
-}
-
-// Median cut: start with every sampled colour in one box and keep splitting the
-// box that spans the widest channel until the palette is full.
-static void
-GIFPaletteBuild(GIFPalette *const palette, int max_colors) {
-  palette->key_count = 0;
-
-  for (int key = 0; key < GIF_QUANTIZE_SIZE; key++) {
-    if (palette->cells[key].count > 0) palette->keys[palette->key_count++] = (uint16_t) key;
-  }
-
-  if (palette->transparency) max_colors--;
-  if (max_colors < 1) max_colors = 1;
-
-  GIFColorBox boxes[GIF_MAX_COLORS];
-
-  int count = 0;
-
-  if (palette->key_count > 0) {
-    boxes[count++] = (GIFColorBox) {0, palette->key_count};
-  }
-
-  while (count > 0 && count < max_colors) {
-    int target = GIF_INDEX_INVALID;
-    int widest = 0;
-    int shift = 0;
-
-    for (int i = 0; i < count; i++) {
-      int candidate = 0;
-
-      const int range = GIFColorBoxWidest(palette, &boxes[i], &candidate);
-
-      if (range > widest) {
-        widest = range;
-        shift = candidate;
-        target = i;
-      }
-    }
-
-    if (target == GIF_INDEX_INVALID) break;
-
-    GIFColorBoxSort(palette, &boxes[target], shift);
-
-    const int middle = GIFColorBoxSplit(palette, &boxes[target]);
-
-    boxes[count++] = (GIFColorBox) {middle, boxes[target].end};
-
-    boxes[target].end = middle;
-  }
-
-  for (int i = 0; i < count; i++) {
-    uint64_t total = 0, red = 0, green = 0, blue = 0;
-
-    for (int j = boxes[i].begin; j < boxes[i].end; j++) {
-      const GIFColorCell *const cell = &palette->cells[palette->keys[j]];
-
-      total += cell->count;
-      red += cell->red;
-      green += cell->green;
-      blue += cell->blue;
-    }
-
-    if (total == 0) total = 1;
-
-    palette->colors[i].Red = (GifByteType) (red / total);
-    palette->colors[i].Green = (GifByteType) (green / total);
-    palette->colors[i].Blue = (GifByteType) (blue / total);
-  }
-
-  palette->color_count = count;
-  palette->transparent = palette->transparency ? count : GIF_INDEX_INVALID;
-
-  GIFPaletteResolve(palette);
-}
-
-static void
-GIFPaletteMap(const GIFPalette *const palette, const GIFPicture *const picture, uint8_t *const indices) {
-  for (int y = 0; y < picture->height; y++) {
-    const uint32_t *const row = picture->rgba + (size_t) y * picture->stride;
-
-    uint8_t *const dst = indices + (size_t) y * picture->width;
-
-    for (int x = 0; x < picture->width; x++) {
-      const GIFPixel *const pixel = (const GIFPixel *) &row[x];
-
-      dst[x] = pixel->alpha < GIF_ALPHA_THRESHOLD ? (uint8_t) palette->transparent : palette->lookup[GIFQuantizeKey(pixel)];
-    }
-  }
-}
-
-// A colour map has a power of two entries, and the reserved transparent index
-// sits past the colours the quantizer produced.
-static ColorMapObject *
-GIFPaletteToMap(const GIFPalette *const palette) {
-  int count = palette->color_count + (palette->transparency ? 1 : 0);
-
-  if (count < 1) count = 1;
-
-  ColorMapObject *const map = GifMakeMapObject(1 << GifBitSize(count), NULL);
-
-  if (map == NULL) return NULL;
-
-  for (int i = 0; i < palette->color_count; i++) {
-    map->Colors[i] = palette->colors[i];
-  }
-
-  return map;
 }
 
 static int

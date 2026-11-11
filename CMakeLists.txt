@@ -21,6 +21,7 @@ target_sources(
     ${giflib}/gif_lib_private.h
     ${giflib}/gifalloc.c
     ${giflib}/openbsd-reallocarray.c
+    ${giflib}/quantize.c
 )
 
 target_include_directories(
