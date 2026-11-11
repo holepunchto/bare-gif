@@ -2,7 +2,9 @@
 #include <bare/module.h>
 #include <js.h>
 
+#include "buffer.h"
 #include "gif.h"
+#include "quantize.h"
 
 typedef struct {
   const uint8_t *data;

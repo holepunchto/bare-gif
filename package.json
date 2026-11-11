@@ -8,7 +8,9 @@
   },
   "files": [
     "index.js",
+    "buffer.h",
     "gif.h",
+    "quantize.h",
     "binding.c",
     "binding.js",
     "CMakeLists.txt",
