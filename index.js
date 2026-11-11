@@ -54,3 +54,63 @@ exports.decodeAnimated = function decodeAnimated(image, opts = {}) {
     frames
   }
 }
+
+exports.encode = function encode(image, opts = {}) {
+  const { colors = binding.maxColors } = opts
+
+  const { width, height, data } = image
+
+  assertCanvas(width, height)
+  assertFrame(width, height, data)
+
+  const buffer = binding.encode(data, width, height, clamp(colors, 2, binding.maxColors))
+
+  return Buffer.from(buffer)
+}
+
+exports.encodeAnimated = function encodeAnimated(image, opts = {}) {
+  const { colors = binding.maxColors, loops = 0 } = opts
+
+  const { width, height } = image
+
+  assertCanvas(width, height)
+
+  const encoder = binding.animatedEncoderInit(width, height, loops)
+
+  for (const { data, timestamp } of image.frames) {
+    assertFrame(width, height, data)
+
+    binding.animatedEncoderAddFrame(
+      encoder,
+      data,
+      width,
+      height,
+      clamp(colors, 2, binding.maxColors),
+      timestamp
+    )
+  }
+
+  return Buffer.from(binding.animatedEncoderAssemble(encoder))
+}
+
+function assertCanvas(width, height) {
+  if (!Number.isInteger(width) || !Number.isInteger(height) || width <= 0 || height <= 0) {
+    throw new Error('Width and height must be positive integers')
+  }
+
+  if (width * height > binding.maxPixels) {
+    throw new Error(`Image exceeds the maximum of ${binding.maxPixels} pixels`)
+  }
+}
+
+function assertFrame(width, height, data) {
+  const expected = width * height * 4
+
+  if (data.byteLength < expected) {
+    throw new Error(`Image needs ${expected} bytes of RGBA data, got ${data.byteLength}`)
+  }
+}
+
+function clamp(value, min, max) {
+  return Math.max(min, Math.min(max, value))
+}

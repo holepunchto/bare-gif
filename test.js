@@ -233,3 +233,120 @@ test('decode() rejects a header with no screen descriptor', (t) => {
 test('decodeAnimated() rejects a header with no screen descriptor', (t) => {
   t.exception(() => gif.decodeAnimated(headerOnly), /No screen descriptor/)
 })
+
+test('encode() round trips a solid image', (t) => {
+  const image = solid(8, 4, [255, 0, 0, 255])
+
+  const decoded = gif.decode(gif.encode(image))
+
+  t.is(decoded.width, 8)
+  t.is(decoded.height, 4)
+  t.alike([...decoded.data.subarray(0, 4)], [255, 0, 0, 255])
+})
+
+test('encode() keeps every distinct colour it has room for', (t) => {
+  const image = gradient(16, 16)
+
+  const decoded = gif.decode(gif.encode(image))
+
+  t.is(countColors(decoded.data), countColors(image.data))
+})
+
+test('encode() reduces the palette to the colours asked for', (t) => {
+  const image = gradient(16, 16)
+
+  const decoded = gif.decode(gif.encode(image, { colors: 4 }))
+
+  t.ok(countColors(decoded.data) <= 4)
+})
+
+test('encode() keeps a fully transparent pixel transparent', (t) => {
+  const image = solid(2, 1, [0, 0, 255, 255])
+
+  image.data.fill(0, 4, 8)
+
+  const decoded = gif.decode(gif.encode(image))
+
+  t.is(decoded.data[7], 0, 'second pixel is transparent')
+  t.is(decoded.data[3], 255, 'first pixel is opaque')
+})
+
+test('encode() rejects an image with no pixels', (t) => {
+  t.exception(() => gif.encode(solid(0, 0, [0, 0, 0, 0])), /positive integers/i)
+})
+
+test('encode() rejects data shorter than its dimensions', (t) => {
+  t.exception(() => gif.encode({ width: 4, height: 4, data: Buffer.alloc(8) }), /needs 64 bytes/i)
+})
+
+test('encodeAnimated() round trips frames and their timing', (t) => {
+  const encoded = gif.encodeAnimated({
+    width: 4,
+    height: 4,
+    frames: [
+      { data: solid(4, 4, [255, 0, 0, 255]).data, timestamp: 0 },
+      { data: solid(4, 4, [0, 255, 0, 255]).data, timestamp: 100 },
+      { data: solid(4, 4, [0, 0, 255, 255]).data, timestamp: 200 }
+    ]
+  })
+
+  const decoded = gif.decodeAnimated(encoded)
+  const frames = [...decoded.frames]
+
+  t.is(decoded.width, 4)
+  t.is(decoded.height, 4)
+  t.is(frames.length, 3)
+  t.alike([...frames[0].data.subarray(0, 4)], [255, 0, 0, 255])
+  t.alike([...frames[1].data.subarray(0, 4)], [0, 255, 0, 255])
+  t.is(frames[1].timestamp, 100)
+})
+
+test('encodeAnimated() rejects a frame smaller than the canvas', (t) => {
+  t.exception(
+    () =>
+      gif.encodeAnimated({
+        width: 4,
+        height: 4,
+        frames: [{ data: solid(2, 2, [0, 0, 0, 255]).data, timestamp: 0 }]
+      }),
+    /needs 64 bytes/i
+  )
+})
+
+function solid(width, height, [red, green, blue, alpha]) {
+  const data = Buffer.alloc(width * height * 4)
+
+  for (let i = 0; i < data.byteLength; i += 4) {
+    data[i] = red
+    data[i + 1] = green
+    data[i + 2] = blue
+    data[i + 3] = alpha
+  }
+
+  return { width, height, data }
+}
+
+// Colours are bucketed to 5 bits per channel before quantization, so every
+// step here survives as its own palette entry.
+function gradient(width, height) {
+  const data = Buffer.alloc(width * height * 4)
+
+  for (let i = 0; i < width * height; i++) {
+    data[i * 4] = (i % 8) * 32
+    data[i * 4 + 1] = 0
+    data[i * 4 + 2] = 0
+    data[i * 4 + 3] = 255
+  }
+
+  return { width, height, data }
+}
+
+function countColors(data) {
+  const seen = new Set()
+
+  for (let i = 0; i < data.byteLength; i += 4) {
+    seen.add(data.readUInt32LE(i))
+  }
+
+  return seen.size
+}
