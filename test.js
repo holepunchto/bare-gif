@@ -313,6 +313,32 @@ test('encodeAnimated() rejects a frame smaller than the canvas', (t) => {
   )
 })
 
+test('encode() rejects a canvas beyond the pixel budget', (t) => {
+  t.exception(
+    () => gif.encode({ width: 1 << 15, height: 1 << 15, data: Buffer.alloc(0) }),
+    /maximum of \d+ pixels/i
+  )
+})
+
+test('encodeAnimated() round trips a real animation', (t) => {
+  const decoded = gif.decodeAnimated(bufferfly)
+  const frames = [...decoded.frames]
+
+  const encoded = gif.encodeAnimated({
+    width: decoded.width,
+    height: decoded.height,
+    frames
+  })
+
+  const again = gif.decodeAnimated(encoded)
+  const round = [...again.frames]
+
+  t.is(again.width, decoded.width)
+  t.is(again.height, decoded.height)
+  t.is(round.length, frames.length)
+  t.is(round[1].timestamp, frames[1].timestamp)
+})
+
 function solid(width, height, [red, green, blue, alpha]) {
   const data = Buffer.alloc(width * height * 4)
 
