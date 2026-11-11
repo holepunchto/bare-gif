@@ -279,6 +279,33 @@ test('encode() rejects data shorter than its dimensions', (t) => {
   t.exception(() => gif.encode({ width: 4, height: 4, data: Buffer.alloc(8) }), /needs 64 bytes/i)
 })
 
+test('encode() rejects data that is not a typed array', (t) => {
+  for (const data of [
+    { byteLength: 16 },
+    [0, 0, 0, 0],
+    'xxxx',
+    new ArrayBuffer(16),
+    new DataView(new ArrayBuffer(16))
+  ]) {
+    t.exception(() => gif.encode({ width: 2, height: 2, data }), /must be a typed array/i)
+  }
+})
+
+test('encodeAnimated() releases the encoder when a frame is rejected', (t) => {
+  t.exception(
+    () =>
+      gif.encodeAnimated({
+        width: 2,
+        height: 2,
+        frames: [
+          { data: solid(2, 2, [255, 0, 0, 255]).data, timestamp: 0 },
+          { data: 'not a frame', timestamp: 100 }
+        ]
+      }),
+    /must be a typed array/i
+  )
+})
+
 test('encodeAnimated() round trips frames and their timing', (t) => {
   const encoded = gif.encodeAnimated({
     width: 4,

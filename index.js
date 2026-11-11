@@ -77,20 +77,17 @@ exports.encodeAnimated = function encodeAnimated(image, opts = {}) {
 
   const encoder = binding.animatedEncoderInit(width, height, loops)
 
-  for (const { data, timestamp } of image.frames) {
-    assertFrame(width, height, data)
+  try {
+    for (const { data, timestamp } of image.frames) {
+      assertFrame(width, height, data)
 
-    binding.animatedEncoderAddFrame(
-      encoder,
-      data,
-      width,
-      height,
-      clamp(colors, 2, binding.maxColors),
-      timestamp
-    )
+      binding.animatedEncoderAddFrame(encoder, data, clamp(colors, 2, binding.maxColors), timestamp)
+    }
+
+    return Buffer.from(binding.animatedEncoderAssemble(encoder))
+  } finally {
+    binding.animatedEncoderDestroy(encoder)
   }
-
-  return Buffer.from(binding.animatedEncoderAssemble(encoder))
 }
 
 function assertCanvas(width, height) {
@@ -104,6 +101,10 @@ function assertCanvas(width, height) {
 }
 
 function assertFrame(width, height, data) {
+  if (!ArrayBuffer.isView(data) || data instanceof DataView) {
+    throw new Error('Image data must be a typed array')
+  }
+
   const expected = width * height * 4
 
   if (data.byteLength < expected) {

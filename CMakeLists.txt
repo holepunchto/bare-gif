@@ -21,7 +21,6 @@ target_sources(
     ${giflib}/gif_lib_private.h
     ${giflib}/gifalloc.c
     ${giflib}/openbsd-reallocarray.c
-    ${giflib}/quantize.c
 )
 
 target_include_directories(
@@ -35,8 +34,11 @@ add_bare_module(bare_gif)
 target_sources(
   ${bare_gif}
   PRIVATE
+    buffer.h
     gif.h
+    quantize.h
     binding.c
+    giflib-quantize.c
 )
 
 target_link_libraries(

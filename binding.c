@@ -625,17 +625,26 @@ bare_gif__encoder_flush_pending(bare_gif_encoder_t *encoder, int delay) {
   return ok;
 }
 
-static void
-bare_gif__on_finalize_encoder(js_env_t *env, void *data, void *finalize_hint) {
-  bare_gif_encoder_t *encoder = (bare_gif_encoder_t *) data;
-
+static inline void
+bare_gif__encoder_release(bare_gif_encoder_t *encoder) {
   int err;
 
-  if (encoder->file) EGifCloseFile(encoder->file, &err);
+  if (encoder->file) {
+    EGifCloseFile(encoder->file, &err);
+
+    encoder->file = NULL;
+  }
 
   bare_gif__encoder_drop_pending(encoder);
 
   GIFBufferFree(&encoder->buffer);
+}
+
+static void
+bare_gif__on_finalize_encoder(js_env_t *env, void *data, void *finalize_hint) {
+  bare_gif_encoder_t *encoder = (bare_gif_encoder_t *) data;
+
+  bare_gif__encoder_release(encoder);
 
   free(encoder);
 }
@@ -717,13 +726,13 @@ static js_value_t *
 bare_gif_animated_encoder_add_frame(js_env_t *env, js_callback_info_t *info) {
   int err;
 
-  size_t argc = 6;
-  js_value_t *argv[6];
+  size_t argc = 4;
+  js_value_t *argv[4];
 
   err = js_get_callback_info(env, info, &argc, argv, NULL, NULL);
   assert(err == 0);
 
-  assert(argc == 6);
+  assert(argc == 4);
 
   bare_gif_encoder_t *encoder;
   err = js_get_value_external(env, argv[0], (void **) &encoder);
@@ -733,23 +742,24 @@ bare_gif_animated_encoder_add_frame(js_env_t *env, js_callback_info_t *info) {
   err = js_get_typedarray_info(env, argv[1], NULL, (void **) &data, NULL, NULL, NULL);
   assert(err == 0);
 
-  int64_t width;
-  err = js_get_value_int64(env, argv[2], &width);
-  assert(err == 0);
-
-  int64_t height;
-  err = js_get_value_int64(env, argv[3], &height);
-  assert(err == 0);
-
   int64_t colors;
-  err = js_get_value_int64(env, argv[4], &colors);
+  err = js_get_value_int64(env, argv[2], &colors);
   assert(err == 0);
 
   int64_t timestamp;
-  err = js_get_value_int64(env, argv[5], &timestamp);
+  err = js_get_value_int64(env, argv[3], &timestamp);
   assert(err == 0);
 
-  const GIFPicture picture = {(int) width, (int) height, (uint32_t *) data, (int) width};
+  if (encoder->file == NULL) {
+    err = js_throw_error(env, NULL, "Encoder has already been assembled");
+    assert(err == 0);
+
+    return NULL;
+  }
+
+  // The frame is quantized and written against the same dimensions, so a
+  // caller cannot make the two disagree.
+  const GIFPicture picture = {encoder->width, encoder->height, (uint32_t *) data, encoder->width};
 
   GIFQuantized quantized;
 
@@ -840,6 +850,27 @@ bare_gif_animated_encoder_assemble(js_env_t *env, js_callback_info_t *info) {
 }
 
 static js_value_t *
+bare_gif_animated_encoder_destroy(js_env_t *env, js_callback_info_t *info) {
+  int err;
+
+  size_t argc = 1;
+  js_value_t *argv[1];
+
+  err = js_get_callback_info(env, info, &argc, argv, NULL, NULL);
+  assert(err == 0);
+
+  assert(argc == 1);
+
+  bare_gif_encoder_t *encoder;
+  err = js_get_value_external(env, argv[0], (void **) &encoder);
+  assert(err == 0);
+
+  bare_gif__encoder_release(encoder);
+
+  return NULL;
+}
+
+static js_value_t *
 bare_gif_exports(js_env_t *env, js_value_t *exports) {
   int err;
 
@@ -862,6 +893,7 @@ bare_gif_exports(js_env_t *env, js_value_t *exports) {
   V("animatedEncoderInit", bare_gif_animated_encoder_init)
   V("animatedEncoderAddFrame", bare_gif_animated_encoder_add_frame)
   V("animatedEncoderAssemble", bare_gif_animated_encoder_assemble)
+  V("animatedEncoderDestroy", bare_gif_animated_encoder_destroy)
 #undef V
 
 #define V(name, n) \

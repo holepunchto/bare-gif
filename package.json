@@ -12,6 +12,7 @@
     "gif.h",
     "quantize.h",
     "binding.c",
+    "giflib-quantize.c",
     "binding.js",
     "CMakeLists.txt",
     "prebuilds"
