@@ -9,6 +9,8 @@
 
 #include "gif.h"
 
+#define GIF_COLOR_CHANNELS 3
+
 #define GIF_MIN_COLORS 2
 #define GIF_MAX_COLORS 256
 
@@ -62,7 +64,9 @@ GIFRefinePalette(
 
       if (pixel->alpha < GIF_ALPHA_THRESHOLD) continue;
 
-      const int index = indices[(size_t) y * picture->width + x];
+      const size_t offset = (size_t) y * picture->width + x;
+
+      const int index = indices[offset];
 
       sums[index][0] += pixel->red;
       sums[index][1] += pixel->green;
@@ -176,7 +180,15 @@ GIFColorSetResolve(
     for (int x = 0; x < picture->width; x++) {
       const GIFPixel *const pixel = (const GIFPixel *) &row[x];
 
-      indices[(size_t) y * picture->width + x] = pixel->alpha < GIF_ALPHA_THRESHOLD ? 0 : set->values[GIFColorSetSlot(set, GIFColorKey(pixel))];
+      const size_t offset = (size_t) y * picture->width + x;
+
+      if (pixel->alpha < GIF_ALPHA_THRESHOLD) {
+        indices[offset] = 0;
+
+        continue;
+      }
+
+      indices[offset] = set->values[GIFColorSetSlot(set, GIFColorKey(pixel))];
     }
   }
 }
@@ -190,7 +202,7 @@ GIFQuantizeBuckets(
 ) {
   const size_t pixels = (size_t) picture->width * (size_t) picture->height;
 
-  GifByteType *planes = malloc(3 * pixels);
+  GifByteType *planes = malloc(GIF_COLOR_CHANNELS * pixels);
   GifByteType *opaque = malloc(pixels);
 
   if (planes == NULL || opaque == NULL) {
@@ -201,8 +213,8 @@ GIFQuantizeBuckets(
   }
 
   GifByteType *const red = planes;
-  GifByteType *const green = planes + pixels;
-  GifByteType *const blue = planes + 2 * pixels;
+  GifByteType *const green = red + pixels;
+  GifByteType *const blue = green + pixels;
 
   size_t count = 0;
 
@@ -249,7 +261,9 @@ GIFQuantizeBuckets(
     for (int x = 0; x < picture->width; x++) {
       const GIFPixel *const pixel = (const GIFPixel *) &row[x];
 
-      indices[(size_t) y * picture->width + x] = pixel->alpha < GIF_ALPHA_THRESHOLD ? 0 : opaque[i++];
+      const size_t offset = (size_t) y * picture->width + x;
+
+      indices[offset] = pixel->alpha < GIF_ALPHA_THRESHOLD ? 0 : opaque[i++];
     }
   }
 
@@ -301,7 +315,9 @@ GIFQuantize(const GIFPicture *const picture, int colors, GIFQuantized *const qua
       for (int x = 0; x < picture->width; x++) {
         const GIFPixel *const pixel = (const GIFPixel *) &row[x];
 
-        if (pixel->alpha < GIF_ALPHA_THRESHOLD) indices[(size_t) y * picture->width + x] = (GifByteType) size;
+        const size_t offset = (size_t) y * picture->width + x;
+
+        if (pixel->alpha < GIF_ALPHA_THRESHOLD) indices[offset] = (GifByteType) size;
       }
     }
 

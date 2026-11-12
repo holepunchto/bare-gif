@@ -235,13 +235,15 @@ test('decodeAnimated() rejects a header with no screen descriptor', (t) => {
 })
 
 test('encode() round trips a solid image', (t) => {
-  const image = solid(8, 4, [255, 0, 0, 255])
+  const width = 8
+  const height = 4
+  const red = [255, 0, 0, 255]
 
-  const decoded = gif.decode(gif.encode(image))
+  const decoded = gif.decode(gif.encode(solid(width, height, red)))
 
-  t.is(decoded.width, 8)
-  t.is(decoded.height, 4)
-  t.alike([...decoded.data.subarray(0, 4)], [255, 0, 0, 255])
+  t.is(decoded.width, width)
+  t.is(decoded.height, height)
+  t.alike([...decoded.data.subarray(0, red.length)], red)
 })
 
 test('encode() keeps every distinct colour it has room for', (t) => {
@@ -318,14 +320,17 @@ test('encode() reduces the palette to the colours asked for', (t) => {
 })
 
 test('encode() keeps a fully transparent pixel transparent', (t) => {
-  const image = solid(2, 1, [0, 0, 255, 255])
+  const blue = [0, 0, 255, 255]
+  const clear = [0, 0, 0, 0]
 
-  image.data.fill(0, 4, 8)
+  const image = solid(2, 1, blue)
+
+  image.data.set(clear, blue.length)
 
   const decoded = gif.decode(gif.encode(image))
 
-  t.is(decoded.data[7], 0, 'second pixel is transparent')
-  t.is(decoded.data[3], 255, 'first pixel is opaque')
+  t.alike([...decoded.data.subarray(0, blue.length)], blue)
+  t.alike([...decoded.data.subarray(blue.length, 2 * blue.length)], clear)
 })
 
 test('encode() rejects an image with no pixels', (t) => {
@@ -443,25 +448,35 @@ test('encodeAnimated() rejects a timestamp that is not a whole number', (t) => {
 })
 
 test('encodeAnimated() round trips frames and their timing', (t) => {
+  const width = 4
+  const height = 4
+  const colours = [
+    [255, 0, 0, 255],
+    [0, 255, 0, 255],
+    [0, 0, 255, 255]
+  ]
+  const timestamps = [0, 100, 200]
+
   const encoded = gif.encodeAnimated({
-    width: 4,
-    height: 4,
-    frames: [
-      { data: solid(4, 4, [255, 0, 0, 255]).data, timestamp: 0 },
-      { data: solid(4, 4, [0, 255, 0, 255]).data, timestamp: 100 },
-      { data: solid(4, 4, [0, 0, 255, 255]).data, timestamp: 200 }
-    ]
+    width,
+    height,
+    frames: colours.map((colour, i) => ({
+      data: solid(width, height, colour).data,
+      timestamp: timestamps[i]
+    }))
   })
 
   const decoded = gif.decodeAnimated(encoded)
   const frames = [...decoded.frames]
 
-  t.is(decoded.width, 4)
-  t.is(decoded.height, 4)
-  t.is(frames.length, 3)
-  t.alike([...frames[0].data.subarray(0, 4)], [255, 0, 0, 255])
-  t.alike([...frames[1].data.subarray(0, 4)], [0, 255, 0, 255])
-  t.is(frames[1].timestamp, 100)
+  t.is(decoded.width, width)
+  t.is(decoded.height, height)
+  t.is(frames.length, colours.length)
+
+  for (let i = 0; i < colours.length; i++) {
+    t.alike([...frames[i].data.subarray(0, colours[i].length)], colours[i])
+    t.is(frames[i].timestamp, timestamps[i])
+  }
 })
 
 test('encode() stamps GIF89a, the version its extensions need', (t) => {
@@ -477,21 +492,26 @@ test('encode() stamps GIF89a, the version its extensions need', (t) => {
 })
 
 test('encodeAnimated() keeps a transparent frame transparent', (t) => {
+  const width = 2
+  const height = 1
+  const red = [255, 0, 0, 255]
+  const clear = [0, 0, 0, 0]
+
   const encoded = gif.encodeAnimated({
-    width: 2,
-    height: 1,
+    width,
+    height,
     frames: [
-      { data: solid(2, 1, [255, 0, 0, 255]).data, timestamp: 0 },
-      { data: solid(2, 1, [0, 0, 0, 0]).data, timestamp: 100 }
+      { data: solid(width, height, red).data, timestamp: 0 },
+      { data: solid(width, height, clear).data, timestamp: 100 }
     ]
   })
 
   const frames = [...gif.decodeAnimated(encoded).frames]
 
-  t.alike([...frames[0].data.subarray(0, 4)], [255, 0, 0, 255])
+  t.alike([...frames[0].data.subarray(0, red.length)], red)
   t.alike(
-    [...frames[1].data.subarray(0, 4)],
-    [0, 0, 0, 0],
+    [...frames[1].data.subarray(0, clear.length)],
+    clear,
     'the opaque frame is disposed before the transparent one'
   )
 })
