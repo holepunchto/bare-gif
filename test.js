@@ -502,6 +502,30 @@ test('encode() rejects a side wider than the format records', (t) => {
   )
 })
 
+test('a budget that is not a whole number never passes for no budget', (t) => {
+  const frames = [{ data: solid(1, 1, [0, 0, 0, 255]).data, timestamp: 0 }]
+
+  for (const maxPixels of [null, NaN, '100', -1, 1.5]) {
+    t.exception(
+      () => [...gif.decodeAnimated(bufferfly, { maxPixels }).frames],
+      /maxPixels must be an integer/
+    )
+
+    t.exception(
+      () => gif.encodeAnimated({ width: 1, height: 1, frames }, { maxPixels }),
+      /maxPixels must be an integer/
+    )
+  }
+
+  t.is(
+    [...gif.decodeAnimated(bufferfly, { maxPixels: 0 }).frames].length,
+    22,
+    'zero still lifts the budget on purpose'
+  )
+
+  t.execution(() => gif.encodeAnimated({ width: 1, height: 1, frames }, { maxPixels: 0 }))
+})
+
 test('encodeAnimated() stops at the budget its own decoder honours', (t) => {
   const frames = Array.from({ length: 100 }, (_, i) => ({
     data: Buffer.alloc(1024 * 1024 * 4),

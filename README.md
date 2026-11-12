@@ -30,7 +30,7 @@ Options include:
 
 ```js
 {
-  maxPixels: gif.defaultMaxPixels // Pixels one decode may produce in total
+  maxPixels: gif.defaultMaxPixels // Pixels one decode may produce in total, 0 for no budget
 }
 ```
 
@@ -60,7 +60,7 @@ Options include:
 {
   colors: gif.maxColors, // Palette entries per frame, 2 to gif.maxColors
   loops: 0, // Times to repeat, 0 to gif.maxLoops, or 0 to loop forever
-  maxPixels: gif.defaultMaxPixels // Pixels the whole animation may hold
+  maxPixels: gif.defaultMaxPixels // Pixels the whole animation may hold, 0 for no budget
 }
 ```
 

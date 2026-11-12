@@ -19,6 +19,8 @@ exports.decode = function decode(image) {
 exports.decodeAnimated = function decodeAnimated(image, opts = {}) {
   const { maxPixels = binding.defaultMaxPixels } = opts
 
+  assertInteger('maxPixels', maxPixels, 0, Number.MAX_SAFE_INTEGER)
+
   const decoder = binding.animatedDecoderInit(image, maxPixels)
 
   const { width, height } = binding.animatedDecoderGetInfo(decoder)
@@ -83,6 +85,7 @@ exports.encodeAnimated = function encodeAnimated(image, opts = {}) {
   assertCanvas(width, height)
   assertInteger('colors', colors, 2, binding.maxColors)
   assertInteger('loops', loops, 0, binding.maxLoops)
+  assertInteger('maxPixels', maxPixels, 0, Number.MAX_SAFE_INTEGER)
 
   const encoder = binding.animatedEncoderInit(width, height, loops)
 
@@ -96,7 +99,7 @@ exports.encodeAnimated = function encodeAnimated(image, opts = {}) {
 
       pixels += width * height
 
-      if (pixels > maxPixels) {
+      if (maxPixels > 0 && pixels > maxPixels) {
         throw new Error(`Animation exceeds the maximum of ${maxPixels} pixels`)
       }
 
