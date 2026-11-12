@@ -496,8 +496,6 @@ function solid(width, height, [red, green, blue, alpha]) {
   return { width, height, data }
 }
 
-// A plain ramp, so neighbouring colours fall in the same 5 bit bucket and only
-// an exact palette keeps them apart.
 function gradient(width, height) {
   const data = Buffer.alloc(width * height * 4)
 

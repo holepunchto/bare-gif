@@ -517,8 +517,6 @@ typedef struct {
   int width;
   int height;
 
-  // A frame is only written once the next one gives away how long it was shown
-  // for, so one frame is always held back.
   GIFQuantized pending;
   int64_t pending_timestamp;
   bool has_pending;
@@ -572,14 +570,10 @@ bare_gif_encode(js_env_t *env, js_callback_info_t *info) {
 
   if (file == NULL) goto err;
 
-  // The sequential API only reads the version back off saved images, which it
-  // never has, so a file carrying extensions has to say so itself.
   EGifSetGifVersion(file, true);
 
   if (EGifPutScreenDesc(file, (int) width, (int) height, 8, 0, quantized.map) == GIF_ERROR) goto err;
 
-  // The colour map is already on the screen descriptor, so the image does not
-  // repeat it.
   if (GIFWriteFrame(file, quantized.indices, (int) width, (int) height, 0, quantized.transparent, DISPOSAL_UNSPECIFIED, NULL) != 1) goto err;
 
   if (EGifCloseFile(file, &err) == GIF_ERROR) {
@@ -703,8 +697,6 @@ bare_gif_animated_encoder_init(js_env_t *env, js_callback_info_t *info) {
 
   EGifSetGifVersion(encoder->file, true);
 
-  // Each frame carries its own colour map, so the screen only needs a map that
-  // keeps the descriptor well formed for readers that insist on one.
   ColorMapObject *global = GifMakeMapObject(2, NULL);
 
   if (global == NULL) goto err;
@@ -772,8 +764,6 @@ bare_gif_animated_encoder_add_frame(js_env_t *env, js_callback_info_t *info) {
     return NULL;
   }
 
-  // The frame is quantized and written against the same dimensions, so a
-  // caller cannot make the two disagree.
   const GIFPicture picture = {encoder->width, encoder->height, (uint32_t *) data, encoder->width};
 
   GIFQuantized quantized;
@@ -786,9 +776,6 @@ bare_gif_animated_encoder_add_frame(js_env_t *env, js_callback_info_t *info) {
   }
 
   if (encoder->has_pending) {
-    // GIF measures a delay in hundredths of a second. Rounding each absolute
-    // position rather than the gap keeps the error at one unit instead of
-    // letting it pile up frame after frame.
     int64_t delay = (timestamp + 5) / 10 - (encoder->pending_timestamp + 5) / 10;
 
     if (delay < 1) delay = 1;
@@ -836,8 +823,6 @@ bare_gif_animated_encoder_assemble(js_env_t *env, js_callback_info_t *info) {
     return NULL;
   }
 
-  // The last frame has no successor to time it, so it is shown for as long as
-  // the one before it.
   const int delay = encoder->delay > 0 ? encoder->delay : GIF_DEFAULT_DELAY;
 
   const int ok = bare_gif__encoder_flush_pending(encoder, delay);
@@ -870,7 +855,6 @@ bare_gif_animated_encoder_assemble(js_env_t *env, js_callback_info_t *info) {
   err = js_create_external_arraybuffer(env, encoder->buffer.data, encoder->buffer.len, bare_gif__on_finalize, NULL, &result);
   assert(err == 0);
 
-  // Ownership of the bytes moves to the array buffer.
   GIFBufferInit(&encoder->buffer);
 
   return result;

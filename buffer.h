@@ -7,8 +7,6 @@
 
 #define GIF_BUFFER_MIN_CAPACITY 4096
 
-// An encode writes at most a byte per pixel plus the LZW and block overhead, so
-// this only ever trips on a caller that ignores GIF_MAX_PIXELS.
 #define GIF_MAX_OUTPUT (1ULL << 30)
 
 typedef struct {
@@ -16,8 +14,6 @@ typedef struct {
   size_t len;
   size_t capacity;
 
-  // giflib drops the result of its write callback on most paths, so a failure
-  // has to survive until someone asks for the bytes.
   bool failed;
 } GIFBuffer;
 

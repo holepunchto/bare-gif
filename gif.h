@@ -57,13 +57,10 @@
 // so the per-frame cap alone leaves the total unbounded.
 #define GIF_DEFAULT_MAX_PIXELS (1ULL << 26)
 
-// Hundredths of a second a frame is shown for when nothing says otherwise.
 #define GIF_DEFAULT_DELAY 10
 
-// A delay is a 16 bit field, so just under 11 minutes a frame.
 #define GIF_MAX_DELAY 0xffff
 
-// Screen and image dimensions are 16 bit fields.
 #define GIF_MAX_DIMENSION 0xffff
 
 typedef enum GIFDisposeMethod {

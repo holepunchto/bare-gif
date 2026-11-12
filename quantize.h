@@ -8,14 +8,10 @@
 
 #include "gif.h"
 
-// A GIF pixel is an index into a colour map of at most 256 entries.
 #define GIF_MAX_COLORS 256
 
-// A GIF has no alpha channel, only a fully transparent palette index.
 #define GIF_ALPHA_THRESHOLD 128
 
-// giflib still ships and maintains its quantizer, it just keeps it out of the
-// public header.
 int
 GifQuantizeBuffer(unsigned int width, unsigned int height, int *color_map_size, const GifByteType *red, const GifByteType *green, const GifByteType *blue, GifByteType *output, GifColorType *color_map);
 
@@ -35,9 +31,6 @@ GIFQuantizedFree(GIFQuantized *const quantized) {
   quantized->map = NULL;
 }
 
-// giflib averages the 5 bit buckets it sorts on, so every channel lands on a
-// multiple of 8 and pure white comes back as 0xf8. The boxes it picked are
-// right, only the colour it names them is rounded, so average the real pixels.
 static void
 GIFRefinePalette(const GIFPicture *const picture, const GifByteType *const indices, int size, GifColorType *const palette) {
   uint64_t sums[GIF_MAX_COLORS][3] = {{0}};
@@ -70,16 +63,11 @@ GIFRefinePalette(const GIFPicture *const picture, const GifByteType *const indic
   }
 }
 
-// Open addressed, and at least twice GIF_MAX_COLORS so the table never fills
-// and probing always terminates.
 #define GIF_COLOR_SLOT_BITS 9
 #define GIF_COLOR_SLOTS     (1 << GIF_COLOR_SLOT_BITS)
 
-// A colour is only 24 bits, so a key can never be all ones.
 #define GIF_COLOR_EMPTY 0xffffffffu
 
-// Knuth's multiplicative hash: 2^32 over the golden ratio. Multiplying by it
-// drives the spread into the high bits, which is why only those are kept.
 #define GIF_COLOR_HASH 2654435761u
 
 typedef struct {
@@ -93,13 +81,10 @@ GIFColorKey(const GIFPixel *const pixel) {
   return ((uint32_t) pixel->red << 16) | ((uint32_t) pixel->green << 8) | pixel->blue;
 }
 
-// Returns where the colour lives, or the first free slot it would take.
 static inline int
 GIFColorSetSlot(const GIFColorSet *const set, uint32_t key) {
   int slot = (int) ((key * GIF_COLOR_HASH) >> (32 - GIF_COLOR_SLOT_BITS));
 
-  // Two colours can hash to the same slot, so walk on until this colour or an
-  // empty slot turns up.
   while (set->keys[slot] != GIF_COLOR_EMPTY && set->keys[slot] != key) {
     slot = (slot + 1) & (GIF_COLOR_SLOTS - 1);
   }
@@ -120,9 +105,6 @@ GIFHasTransparency(const GIFPicture *const picture) {
   return false;
 }
 
-// A GIF frame carries at most 256 colours by construction, and so do most
-// screenshots, charts and logos. Those fit a palette exactly, and quantizing
-// them would drop colours for nothing.
 static int
 GIFColorSetBuild(GIFColorSet *const set, const GIFPicture *const picture, int colors) {
   memset(set->keys, 0xff, sizeof(set->keys));
@@ -176,14 +158,10 @@ GIFColorSetResolve(const GIFColorSet *const set, const GIFPicture *const picture
   }
 }
 
-// Transparent pixels show no colour, so leaving them out of the histogram
-// stops them spending a palette entry on the RGB they happen to carry.
 static int
 GIFQuantizeBuckets(const GIFPicture *const picture, int *const size, GifColorType *const palette, GifByteType *const indices) {
   const size_t pixels = (size_t) picture->width * (size_t) picture->height;
 
-  // The quantizer reads one plane per channel, the picture holds them
-  // interleaved.
   GifByteType *planes = malloc(3 * pixels);
   GifByteType *opaque = malloc(pixels);
 
@@ -259,8 +237,6 @@ GIFQuantize(const GIFPicture *const picture, int colors, GIFQuantized *const qua
 
   const bool transparency = GIFHasTransparency(picture);
 
-  // A GIF has no alpha channel, only an index that reads as transparent, so
-  // transparency costs one of the colours.
   int size = transparency ? colors - 1 : colors;
 
   if (size < 1) size = 1;
@@ -293,8 +269,6 @@ GIFQuantize(const GIFPicture *const picture, int colors, GIFQuantized *const qua
     quantized->transparent = size;
   }
 
-  // A colour map holds a power of two entries, and the transparent index sits
-  // past the colours the palette settled on.
   quantized->map = GifMakeMapObject(1 << GifBitSize(size + (transparency ? 1 : 0)), NULL);
 
   if (quantized->map == NULL) {
