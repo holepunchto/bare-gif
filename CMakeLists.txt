@@ -5,7 +5,12 @@ find_package(cmake-fetch REQUIRED PATHS node_modules/cmake-fetch)
 
 project(bare_gif C)
 
-fetch_package("git:git.code.sf.net/p/giflib/code#5.2.2" SOURCE_DIR giflib)
+fetch_package(
+  "git:git.code.sf.net/p/giflib/code#5.2.2"
+  SOURCE_DIR giflib
+  PATCHES
+    patches/01-quantize-thread-local.patch
+)
 
 add_library(giflib STATIC)
 
@@ -21,6 +26,7 @@ target_sources(
     ${giflib}/gif_lib_private.h
     ${giflib}/gifalloc.c
     ${giflib}/openbsd-reallocarray.c
+    ${giflib}/quantize.c
 )
 
 target_include_directories(
@@ -38,7 +44,6 @@ target_sources(
     gif.h
     quantize.h
     binding.c
-    giflib-quantize.c
 )
 
 target_link_libraries(
