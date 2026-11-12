@@ -409,7 +409,16 @@ GIFWriteLoop(GifFileType *const gif, int loops) {
 }
 
 static int
-GIFWriteFrame(GifFileType *const gif, const uint8_t *const indices, int width, int height, int delay, int transparent, int dispose, ColorMapObject *const map) {
+GIFWriteFrame(
+  GifFileType *const gif,
+  const uint8_t *const indices,
+  int width,
+  int height,
+  int delay,
+  int transparent,
+  int dispose,
+  ColorMapObject *const map
+) {
   if (delay > 0 || transparent != GIF_INDEX_INVALID || dispose != DISPOSAL_UNSPECIFIED) {
     const GraphicsControlBlock gcb = {
       .DisposalMode = dispose,

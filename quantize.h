@@ -13,7 +13,16 @@
 #define GIF_ALPHA_THRESHOLD 128
 
 int
-GifQuantizeBuffer(unsigned int width, unsigned int height, int *color_map_size, const GifByteType *red, const GifByteType *green, const GifByteType *blue, GifByteType *output, GifColorType *color_map);
+GifQuantizeBuffer(
+  unsigned int width,
+  unsigned int height,
+  int *color_map_size,
+  const GifByteType *red,
+  const GifByteType *green,
+  const GifByteType *blue,
+  GifByteType *output,
+  GifColorType *color_map
+);
 
 typedef struct {
   GifByteType *indices;
@@ -32,7 +41,12 @@ GIFQuantizedFree(GIFQuantized *const quantized) {
 }
 
 static void
-GIFRefinePalette(const GIFPicture *const picture, const GifByteType *const indices, int size, GifColorType *const palette) {
+GIFRefinePalette(
+  const GIFPicture *const picture,
+  const GifByteType *const indices,
+  int size,
+  GifColorType *const palette
+) {
   uint64_t sums[GIF_MAX_COLORS][3] = {{0}};
   uint64_t counts[GIF_MAX_COLORS] = {0};
 
@@ -134,7 +148,12 @@ GIFColorSetBuild(GIFColorSet *const set, const GIFPicture *const picture, int co
 }
 
 static void
-GIFColorSetResolve(const GIFColorSet *const set, const GIFPicture *const picture, GifColorType *const palette, GifByteType *const indices) {
+GIFColorSetResolve(
+  const GIFColorSet *const set,
+  const GIFPicture *const picture,
+  GifColorType *const palette,
+  GifByteType *const indices
+) {
   for (int slot = 0; slot < GIF_COLOR_SLOTS; slot++) {
     const uint32_t key = set->keys[slot];
 
@@ -159,7 +178,12 @@ GIFColorSetResolve(const GIFColorSet *const set, const GIFPicture *const picture
 }
 
 static int
-GIFQuantizeBuckets(const GIFPicture *const picture, int *const size, GifColorType *const palette, GifByteType *const indices) {
+GIFQuantizeBuckets(
+  const GIFPicture *const picture,
+  int *const size,
+  GifColorType *const palette,
+  GifByteType *const indices
+) {
   const size_t pixels = (size_t) picture->width * (size_t) picture->height;
 
   GifByteType *planes = malloc(3 * pixels);
@@ -194,7 +218,16 @@ GIFQuantizeBuckets(const GIFPicture *const picture, int *const size, GifColorTyp
     }
   }
 
-  const int err = GifQuantizeBuffer((unsigned int) count, 1, size, red, green, blue, opaque, palette);
+  const int err = GifQuantizeBuffer(
+    (unsigned int) count,
+    1,
+    size,
+    red,
+    green,
+    blue,
+    opaque,
+    palette
+  );
 
   free(planes);
 
