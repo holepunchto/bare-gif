@@ -1,5 +1,6 @@
 #pragma once
 
+#include <assert.h>
 #include <gif_lib.h>
 #include <stdbool.h>
 #include <stdint.h>
@@ -48,6 +49,8 @@ GIFRefinePalette(
   int size,
   GifColorType *const palette
 ) {
+  assert(size >= 0 && size <= GIF_MAX_COLORS);
+
   uint64_t sums[GIF_MAX_COLORS][3] = {{0}};
   uint64_t counts[GIF_MAX_COLORS] = {0};
 
@@ -270,6 +273,8 @@ GIFQuantize(const GIFPicture *const picture, int colors, GIFQuantized *const qua
   if (indices == NULL) return 0;
 
   const bool transparency = GIFHasTransparency(picture);
+
+  assert(colors >= GIF_MIN_COLORS && colors <= GIF_MAX_COLORS);
 
   int size = transparency ? colors - 1 : colors;
 
