@@ -1,5 +1,11 @@
 const binding = require('./binding')
 
+exports.maxColors = binding.maxColors
+exports.maxDimension = binding.maxDimension
+exports.maxLoops = binding.maxLoops
+exports.maxFramePixels = binding.maxFramePixels
+exports.defaultMaxPixels = binding.defaultMaxPixels
+
 exports.decode = function decode(image) {
   const { width, height, data } = binding.decode(image)
 
@@ -70,7 +76,7 @@ exports.encode = function encode(image, opts = {}) {
 }
 
 exports.encodeAnimated = function encodeAnimated(image, opts = {}) {
-  const { colors = binding.maxColors, loops = 0 } = opts
+  const { colors = binding.maxColors, loops = 0, maxPixels = binding.defaultMaxPixels } = opts
 
   const { width, height } = image
 
@@ -82,10 +88,17 @@ exports.encodeAnimated = function encodeAnimated(image, opts = {}) {
 
   try {
     let count = 0
+    let pixels = 0
 
     for (const { data, timestamp } of image.frames) {
       assertFrame(width, height, data)
       assertInteger('timestamp', timestamp, 0, Number.MAX_SAFE_INTEGER)
+
+      pixels += width * height
+
+      if (pixels > maxPixels) {
+        throw new Error(`Animation exceeds the maximum of ${maxPixels} pixels`)
+      }
 
       binding.animatedEncoderAddFrame(encoder, data, colors, timestamp)
 
@@ -113,8 +126,8 @@ function assertCanvas(width, height) {
     )
   }
 
-  if (width * height > binding.maxPixels) {
-    throw new Error(`Image exceeds the maximum of ${binding.maxPixels} pixels`)
+  if (width * height > binding.maxFramePixels) {
+    throw new Error(`Image exceeds the maximum of ${binding.maxFramePixels} pixels`)
   }
 }
 

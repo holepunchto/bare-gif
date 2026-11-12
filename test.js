@@ -346,6 +346,28 @@ test('encodeAnimated() releases the encoder when a frame is rejected', (t) => {
   )
 })
 
+test('the limits a caller can check against are the ones enforced', (t) => {
+  t.exception(
+    () => gif.encode(solid(1, 1, [0, 0, 0, 255]), { colors: gif.maxColors + 1 }),
+    new RegExp(`between 2 and ${gif.maxColors}`)
+  )
+
+  t.exception(
+    () => gif.encodeAnimated({ width: 1, height: 1, frames: [] }, { loops: gif.maxLoops + 1 }),
+    new RegExp(`between 0 and ${gif.maxLoops}`)
+  )
+
+  t.exception(
+    () =>
+      gif.encode({
+        width: gif.maxDimension + 1,
+        height: 1,
+        data: Buffer.alloc(4)
+      }),
+    new RegExp(`at most ${gif.maxDimension}`)
+  )
+})
+
 test('encode() rejects a colour count that is not a whole number in range', (t) => {
   const image = solid(1, 1, [0, 0, 0, 255])
 
@@ -477,6 +499,24 @@ test('encode() rejects a side wider than the format records', (t) => {
   t.exception(
     () => gif.encode({ width: 1, height: 70000, data: Buffer.alloc(280000) }),
     /at most 65535/
+  )
+})
+
+test('encodeAnimated() stops at the budget its own decoder honours', (t) => {
+  const frames = Array.from({ length: 100 }, (_, i) => ({
+    data: Buffer.alloc(1024 * 1024 * 4),
+    timestamp: i * 100
+  }))
+
+  t.exception(
+    () => gif.encodeAnimated({ width: 1024, height: 1024, frames }),
+    /Animation exceeds the maximum/
+  )
+
+  t.execution(
+    () =>
+      gif.encodeAnimated({ width: 1024, height: 1024, frames }, { maxPixels: 200 * 1024 * 1024 }),
+    'the budget lifts the same way it does on decode'
   )
 })
 
