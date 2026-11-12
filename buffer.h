@@ -25,7 +25,10 @@ static void
 GIFBufferFree(GIFBuffer *const buffer) {
   free(buffer->data);
 
-  GIFBufferInit(buffer);
+  buffer->data = NULL;
+  buffer->len = 0;
+  buffer->capacity = 0;
+  buffer->failed = false;
 }
 
 static int
