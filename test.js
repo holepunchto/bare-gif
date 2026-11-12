@@ -292,6 +292,23 @@ test('decode() then encode() loses nothing', (t) => {
   }
 })
 
+test('encode() keeps a full palette when a colour repeats after it fills', (t) => {
+  const colours = gif.maxColors
+
+  const data = Buffer.alloc((colours + 1) * 4)
+
+  for (let i = 0; i < colours; i++) {
+    data[i * 4] = i
+    data[i * 4 + 3] = 255
+  }
+
+  data[colours * 4 + 3] = 255
+
+  const decoded = gif.decode(gif.encode({ width: colours + 1, height: 1, data }))
+
+  t.is(countColors(decoded.data), colours)
+})
+
 test('encode() reduces the palette to the colours asked for', (t) => {
   const image = gradient(16, 16)
 
