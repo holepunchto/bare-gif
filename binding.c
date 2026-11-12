@@ -920,6 +920,7 @@ bare_gif_exports(js_env_t *env, js_value_t *exports) {
   V("maxPixels", GIF_MAX_PIXELS)
   V("maxColors", GIF_MAX_COLORS)
   V("maxDimension", GIF_MAX_DIMENSION)
+  V("maxLoops", GIF_MAX_LOOPS)
 #undef V
 
   return exports;

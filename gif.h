@@ -61,6 +61,8 @@
 
 #define GIF_MAX_DELAY 0xffff
 
+#define GIF_MAX_LOOPS 0xffff
+
 #define GIF_MAX_DIMENSION 0xffff
 
 typedef enum GIFDisposeMethod {

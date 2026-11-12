@@ -62,8 +62,9 @@ exports.encode = function encode(image, opts = {}) {
 
   assertCanvas(width, height)
   assertFrame(width, height, data)
+  assertInteger('colors', colors, 2, binding.maxColors)
 
-  const buffer = binding.encode(data, width, height, clamp(colors, 2, binding.maxColors))
+  const buffer = binding.encode(data, width, height, colors)
 
   return Buffer.from(buffer)
 }
@@ -74,14 +75,17 @@ exports.encodeAnimated = function encodeAnimated(image, opts = {}) {
   const { width, height } = image
 
   assertCanvas(width, height)
+  assertInteger('colors', colors, 2, binding.maxColors)
+  assertInteger('loops', loops, 0, binding.maxLoops)
 
   const encoder = binding.animatedEncoderInit(width, height, loops)
 
   try {
     for (const { data, timestamp } of image.frames) {
       assertFrame(width, height, data)
+      assertInteger('timestamp', timestamp, 0, Number.MAX_SAFE_INTEGER)
 
-      binding.animatedEncoderAddFrame(encoder, data, clamp(colors, 2, binding.maxColors), timestamp)
+      binding.animatedEncoderAddFrame(encoder, data, colors, timestamp)
     }
 
     return Buffer.from(binding.animatedEncoderAssemble(encoder))
@@ -118,6 +122,8 @@ function assertFrame(width, height, data) {
   }
 }
 
-function clamp(value, min, max) {
-  return Math.max(min, Math.min(max, value))
+function assertInteger(name, value, min, max) {
+  if (!Number.isInteger(value) || value < min || value > max) {
+    throw new Error(`${name} must be an integer between ${min} and ${max}`)
+  }
 }

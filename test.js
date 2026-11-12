@@ -346,6 +346,41 @@ test('encodeAnimated() releases the encoder when a frame is rejected', (t) => {
   )
 })
 
+test('encode() rejects a colour count that is not a whole number in range', (t) => {
+  const image = solid(1, 1, [0, 0, 0, 255])
+
+  for (const colors of [NaN, '256', 1000, 1, 1.5, null]) {
+    t.exception(() => gif.encode(image, { colors }), /colors must be an integer between 2 and 256/)
+  }
+})
+
+test('encodeAnimated() rejects a loop count outside what a GIF records', (t) => {
+  const frames = [{ data: solid(1, 1, [0, 0, 0, 255]).data, timestamp: 0 }]
+
+  for (const loops of [65536, -1, NaN, 1.5]) {
+    t.exception(
+      () => gif.encodeAnimated({ width: 1, height: 1, frames }, { loops }),
+      /loops must be an integer between 0 and 65535/
+    )
+  }
+
+  t.execution(() => gif.encodeAnimated({ width: 1, height: 1, frames }, { loops: 65535 }))
+})
+
+test('encodeAnimated() rejects a timestamp that is not a whole number', (t) => {
+  for (const timestamp of ['100', NaN, -1, undefined]) {
+    t.exception(
+      () =>
+        gif.encodeAnimated({
+          width: 1,
+          height: 1,
+          frames: [{ data: solid(1, 1, [0, 0, 0, 255]).data, timestamp }]
+        }),
+      /timestamp must be an integer/
+    )
+  }
+})
+
 test('encodeAnimated() round trips frames and their timing', (t) => {
   const encoded = gif.encodeAnimated({
     width: 4,
