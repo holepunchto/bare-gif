@@ -63,6 +63,10 @@
 
 #define GIF_MAX_LOOPS 0xffff
 
+#define GIF_LOOP_EXTENSION     "NETSCAPE2.0"
+#define GIF_LOOP_EXTENSION_LEN (sizeof(GIF_LOOP_EXTENSION) - 1)
+#define GIF_LOOP_SUB_BLOCK     1
+
 #define GIF_MAX_DIMENSION 0xffff
 
 #define GIF_COLOR_RESOLUTION 8
@@ -402,10 +406,12 @@ GIFGetError(const GifFileType *const gif, int error) {
 
 static int
 GIFWriteLoop(GifFileType *const gif, int loops) {
-  const GifByteType block[] = {1, loops & 0xff, (loops >> 8) & 0xff};
+  const GifByteType name[] = GIF_LOOP_EXTENSION;
+
+  const GifByteType block[] = {GIF_LOOP_SUB_BLOCK, loops & 0xff, (loops >> 8) & 0xff};
 
   if (EGifPutExtensionLeader(gif, APPLICATION_EXT_FUNC_CODE) == GIF_ERROR) return 0;
-  if (EGifPutExtensionBlock(gif, 11, (const GifByteType *) "NETSCAPE2.0") == GIF_ERROR) return 0;
+  if (EGifPutExtensionBlock(gif, GIF_LOOP_EXTENSION_LEN, name) == GIF_ERROR) return 0;
   if (EGifPutExtensionBlock(gif, sizeof(block), block) == GIF_ERROR) return 0;
   if (EGifPutExtensionTrailer(gif) == GIF_ERROR) return 0;
 
