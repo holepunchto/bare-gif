@@ -720,7 +720,16 @@ bare_gif_animated_encoder_init(js_env_t *env, js_callback_info_t *info) {
 
   ColorMapObject *global = GifMakeMapObject(2, NULL);
 
-  if (global == NULL) goto err;
+  if (global == NULL) {
+    bare_gif__encoder_release(encoder);
+
+    free(encoder);
+
+    err = js_throw_error(env, NULL, "Out of memory");
+    assert(err == 0);
+
+    return NULL;
+  }
 
   const int ok = EGifPutScreenDesc(encoder->file, encoder->width, encoder->height, 8, 0, global) != GIF_ERROR && GIFWriteLoop(encoder->file, (int) loops) == 1;
 
@@ -848,11 +857,15 @@ bare_gif_animated_encoder_assemble(js_env_t *env, js_callback_info_t *info) {
 
   GifFileType *file = encoder->file;
 
+  const char *message = ok ? NULL : GIFGetError(file, 0);
+
   encoder->file = NULL;
 
-  if (EGifCloseFile(file, &err) == GIF_ERROR || !ok) {
-    const char *message = GIFGetError(NULL, err);
+  if (EGifCloseFile(file, &err) == GIF_ERROR && message == NULL) {
+    message = GIFGetError(NULL, err);
+  }
 
+  if (message != NULL) {
     GIFBufferFree(&encoder->buffer);
 
     err = js_throw_error(env, NULL, message);
