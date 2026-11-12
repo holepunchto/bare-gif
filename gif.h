@@ -60,6 +60,12 @@
 // Hundredths of a second a frame is shown for when nothing says otherwise.
 #define GIF_DEFAULT_DELAY 10
 
+// A delay is a 16 bit field, so just under 11 minutes a frame.
+#define GIF_MAX_DELAY 0xffff
+
+// Screen and image dimensions are 16 bit fields.
+#define GIF_MAX_DIMENSION 0xffff
+
 typedef enum GIFDisposeMethod {
   GIF_DISPOSE_NONE,
   GIF_DISPOSE_BACKGROUND,
@@ -404,12 +410,10 @@ GIFWriteLoop(GifFileType *const gif, int loops) {
 }
 
 static int
-GIFWriteFrame(GifFileType *const gif, const uint8_t *const indices, int width, int height, int delay, int transparent, ColorMapObject *const map) {
-  if (delay > 0 || transparent != GIF_INDEX_INVALID) {
+GIFWriteFrame(GifFileType *const gif, const uint8_t *const indices, int width, int height, int delay, int transparent, int dispose, ColorMapObject *const map) {
+  if (delay > 0 || transparent != GIF_INDEX_INVALID || dispose != DISPOSAL_UNSPECIFIED) {
     const GraphicsControlBlock gcb = {
-      // Every frame is written as a full canvas, so clearing between frames is
-      // what keeps a transparent pixel transparent.
-      .DisposalMode = transparent == GIF_INDEX_INVALID ? DISPOSAL_UNSPECIFIED : DISPOSE_BACKGROUND,
+      .DisposalMode = dispose,
       .UserInputFlag = false,
       .DelayTime = delay,
       .TransparentColor = transparent

@@ -95,6 +95,12 @@ function assertCanvas(width, height) {
     throw new Error('Width and height must be positive integers')
   }
 
+  if (width > binding.maxDimension || height > binding.maxDimension) {
+    throw new Error(
+      `Width and height must be at most ${binding.maxDimension}, the widest a GIF can record`
+    )
+  }
+
   if (width * height > binding.maxPixels) {
     throw new Error(`Image exceeds the maximum of ${binding.maxPixels} pixels`)
   }

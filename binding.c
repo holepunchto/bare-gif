@@ -520,7 +520,7 @@ typedef struct {
   // A frame is only written once the next one gives away how long it was shown
   // for, so one frame is always held back.
   GIFQuantized pending;
-  int pending_timestamp;
+  int64_t pending_timestamp;
   bool has_pending;
 
   int delay;
@@ -572,11 +572,15 @@ bare_gif_encode(js_env_t *env, js_callback_info_t *info) {
 
   if (file == NULL) goto err;
 
+  // The sequential API only reads the version back off saved images, which it
+  // never has, so a file carrying extensions has to say so itself.
+  EGifSetGifVersion(file, true);
+
   if (EGifPutScreenDesc(file, (int) width, (int) height, 8, 0, quantized.map) == GIF_ERROR) goto err;
 
   // The colour map is already on the screen descriptor, so the image does not
   // repeat it.
-  if (GIFWriteFrame(file, quantized.indices, (int) width, (int) height, 0, quantized.transparent, NULL) != 1) goto err;
+  if (GIFWriteFrame(file, quantized.indices, (int) width, (int) height, 0, quantized.transparent, DISPOSAL_UNSPECIFIED, NULL) != 1) goto err;
 
   if (EGifCloseFile(file, &err) == GIF_ERROR) {
     file = NULL;
@@ -585,6 +589,15 @@ bare_gif_encode(js_env_t *env, js_callback_info_t *info) {
   }
 
   GIFQuantizedFree(&quantized);
+
+  if (buffer.failed) {
+    GIFBufferFree(&buffer);
+
+    err = js_throw_error(env, NULL, "Encoded image could not be buffered");
+    assert(err == 0);
+
+    return NULL;
+  }
 
   js_value_t *result;
   err = js_create_external_arraybuffer(env, buffer.data, buffer.len, bare_gif__on_finalize, NULL, &result);
@@ -618,7 +631,7 @@ static inline int
 bare_gif__encoder_flush_pending(bare_gif_encoder_t *encoder, int delay) {
   if (!encoder->has_pending) return 1;
 
-  const int ok = GIFWriteFrame(encoder->file, encoder->pending.indices, encoder->width, encoder->height, delay, encoder->pending.transparent, encoder->pending.map);
+  const int ok = GIFWriteFrame(encoder->file, encoder->pending.indices, encoder->width, encoder->height, delay, encoder->pending.transparent, DISPOSE_BACKGROUND, encoder->pending.map);
 
   bare_gif__encoder_drop_pending(encoder);
 
@@ -687,6 +700,8 @@ bare_gif_animated_encoder_init(js_env_t *env, js_callback_info_t *info) {
   encoder->file = EGifOpen(&encoder->buffer, bare_gif__on_write, &err);
 
   if (encoder->file == NULL) goto err;
+
+  EGifSetGifVersion(encoder->file, true);
 
   // Each frame carries its own colour map, so the screen only needs a map that
   // keeps the descriptor well formed for readers that insist on one.
@@ -771,14 +786,17 @@ bare_gif_animated_encoder_add_frame(js_env_t *env, js_callback_info_t *info) {
   }
 
   if (encoder->has_pending) {
-    // GIF measures a delay in hundredths of a second.
-    int delay = (int) (timestamp - encoder->pending_timestamp) / 10;
+    // GIF measures a delay in hundredths of a second. Rounding each absolute
+    // position rather than the gap keeps the error at one unit instead of
+    // letting it pile up frame after frame.
+    int64_t delay = (timestamp + 5) / 10 - (encoder->pending_timestamp + 5) / 10;
 
-    if (delay < 0) delay = 0;
+    if (delay < 1) delay = 1;
+    if (delay > GIF_MAX_DELAY) delay = GIF_MAX_DELAY;
 
-    encoder->delay = delay;
+    encoder->delay = (int) delay;
 
-    if (bare_gif__encoder_flush_pending(encoder, delay) != 1) {
+    if (bare_gif__encoder_flush_pending(encoder, encoder->delay) != 1) {
       GIFQuantizedFree(&quantized);
 
       err = js_throw_error(env, NULL, GIFGetError(encoder->file, 0));
@@ -789,7 +807,7 @@ bare_gif_animated_encoder_add_frame(js_env_t *env, js_callback_info_t *info) {
   }
 
   encoder->pending = quantized;
-  encoder->pending_timestamp = (int) timestamp;
+  encoder->pending_timestamp = timestamp;
   encoder->has_pending = true;
 
   return NULL;
@@ -834,6 +852,15 @@ bare_gif_animated_encoder_assemble(js_env_t *env, js_callback_info_t *info) {
     GIFBufferFree(&encoder->buffer);
 
     err = js_throw_error(env, NULL, message);
+    assert(err == 0);
+
+    return NULL;
+  }
+
+  if (encoder->buffer.failed) {
+    GIFBufferFree(&encoder->buffer);
+
+    err = js_throw_error(env, NULL, "Encoded animation could not be buffered");
     assert(err == 0);
 
     return NULL;
@@ -908,6 +935,7 @@ bare_gif_exports(js_env_t *env, js_value_t *exports) {
   V("defaultMaxPixels", GIF_DEFAULT_MAX_PIXELS)
   V("maxPixels", GIF_MAX_PIXELS)
   V("maxColors", GIF_MAX_COLORS)
+  V("maxDimension", GIF_MAX_DIMENSION)
 #undef V
 
   return exports;

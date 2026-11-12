@@ -328,6 +328,83 @@ test('encodeAnimated() round trips frames and their timing', (t) => {
   t.is(frames[1].timestamp, 100)
 })
 
+test('encode() stamps GIF89a, the version its extensions need', (t) => {
+  const still = gif.encode(solid(2, 2, [255, 0, 0, 255]))
+  const animated = gif.encodeAnimated({
+    width: 2,
+    height: 2,
+    frames: [{ data: solid(2, 2, [255, 0, 0, 255]).data, timestamp: 0 }]
+  })
+
+  t.is(still.subarray(0, 6).toString(), 'GIF89a')
+  t.is(animated.subarray(0, 6).toString(), 'GIF89a')
+})
+
+test('encodeAnimated() keeps a transparent frame transparent', (t) => {
+  const encoded = gif.encodeAnimated({
+    width: 2,
+    height: 1,
+    frames: [
+      { data: solid(2, 1, [255, 0, 0, 255]).data, timestamp: 0 },
+      { data: solid(2, 1, [0, 0, 0, 0]).data, timestamp: 100 }
+    ]
+  })
+
+  const frames = [...gif.decodeAnimated(encoded).frames]
+
+  t.alike([...frames[0].data.subarray(0, 4)], [255, 0, 0, 255])
+  t.alike(
+    [...frames[1].data.subarray(0, 4)],
+    [0, 0, 0, 0],
+    'the opaque frame is disposed before the transparent one'
+  )
+})
+
+test('encodeAnimated() keeps frame timing from drifting', (t) => {
+  const frame = solid(1, 1, [0, 0, 0, 255]).data
+  const timestamps = [0, 33, 67, 100, 133]
+
+  const encoded = gif.encodeAnimated({
+    width: 1,
+    height: 1,
+    frames: timestamps.map((timestamp) => ({ data: frame, timestamp }))
+  })
+
+  const decoded = [...gif.decodeAnimated(encoded).frames].map((f) => f.timestamp)
+
+  for (let i = 0; i < timestamps.length; i++) {
+    t.ok(Math.abs(decoded[i] - timestamps[i]) <= 5, `frame ${i} within 5ms`)
+  }
+})
+
+test('encodeAnimated() caps a delay at the widest the format records', (t) => {
+  const frame = solid(1, 1, [0, 0, 0, 255]).data
+
+  const encoded = gif.encodeAnimated({
+    width: 1,
+    height: 1,
+    frames: [
+      { data: frame, timestamp: 0 },
+      { data: frame, timestamp: 700000 }
+    ]
+  })
+
+  const decoded = [...gif.decodeAnimated(encoded).frames].map((f) => f.timestamp)
+
+  t.is(decoded[1], 0xffff * 10, 'clamped rather than wrapped')
+})
+
+test('encode() rejects a side wider than the format records', (t) => {
+  t.exception(
+    () => gif.encode({ width: 70000, height: 1, data: Buffer.alloc(280000) }),
+    /at most 65535/
+  )
+  t.exception(
+    () => gif.encode({ width: 1, height: 70000, data: Buffer.alloc(280000) }),
+    /at most 65535/
+  )
+})
+
 test('encodeAnimated() rejects a frame smaller than the canvas', (t) => {
   t.exception(
     () =>
