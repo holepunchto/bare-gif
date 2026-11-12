@@ -839,7 +839,7 @@ bare_gif_animated_encoder_add_frame(js_env_t *env, js_callback_info_t *info) {
   assert(err == 0);
 
   if (encoder->file == NULL) {
-    err = js_throw_error(env, NULL, "Encoder has already been assembled");
+    err = js_throw_error(env, NULL, "Encoder is no longer open");
     assert(err == 0);
 
     return NULL;
@@ -904,7 +904,7 @@ bare_gif_animated_encoder_assemble(js_env_t *env, js_callback_info_t *info) {
   assert(err == 0);
 
   if (encoder->file == NULL) {
-    err = js_throw_error(env, NULL, "Encoder has already been assembled");
+    err = js_throw_error(env, NULL, "Encoder is no longer open");
     assert(err == 0);
 
     return NULL;
