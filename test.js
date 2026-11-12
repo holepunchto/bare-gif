@@ -480,6 +480,16 @@ test('encode() rejects a side wider than the format records', (t) => {
   )
 })
 
+test('encodeAnimated() rejects an animation with no frames', (t) => {
+  t.exception(() => gif.encodeAnimated({ width: 4, height: 4, frames: [] }), /at least one frame/)
+
+  t.exception(
+    () => gif.encodeAnimated({ width: 4, height: 4, frames: [][Symbol.iterator]() }),
+    /at least one frame/,
+    'an exhausted iterator is caught too'
+  )
+})
+
 test('encodeAnimated() rejects a frame smaller than the canvas', (t) => {
   t.exception(
     () =>

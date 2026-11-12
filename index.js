@@ -81,11 +81,19 @@ exports.encodeAnimated = function encodeAnimated(image, opts = {}) {
   const encoder = binding.animatedEncoderInit(width, height, loops)
 
   try {
+    let count = 0
+
     for (const { data, timestamp } of image.frames) {
       assertFrame(width, height, data)
       assertInteger('timestamp', timestamp, 0, Number.MAX_SAFE_INTEGER)
 
       binding.animatedEncoderAddFrame(encoder, data, colors, timestamp)
+
+      count++
+    }
+
+    if (count === 0) {
+      throw new Error('Animation needs at least one frame')
     }
 
     return Buffer.from(binding.animatedEncoderAssemble(encoder))
