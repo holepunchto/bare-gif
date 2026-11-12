@@ -599,7 +599,14 @@ bare_gif_encode(js_env_t *env, js_callback_info_t *info) {
 
   EGifSetGifVersion(file, true);
 
-  err = EGifPutScreenDesc(file, (int) width, (int) height, 8, 0, quantized.map);
+  err = EGifPutScreenDesc(
+    file,
+    (int) width,
+    (int) height,
+    GIF_COLOR_RESOLUTION,
+    GIF_BACKGROUND_INDEX,
+    quantized.map
+  );
 
   if (err == GIF_ERROR) goto err;
 
@@ -753,7 +760,7 @@ bare_gif_animated_encoder_init(js_env_t *env, js_callback_info_t *info) {
 
   EGifSetGifVersion(encoder->file, true);
 
-  ColorMapObject *global = GifMakeMapObject(2, NULL);
+  ColorMapObject *global = GifMakeMapObject(GIF_MIN_COLORS, NULL);
 
   if (global == NULL) {
     bare_gif__encoder_release(encoder);
@@ -766,7 +773,16 @@ bare_gif_animated_encoder_init(js_env_t *env, js_callback_info_t *info) {
     return NULL;
   }
 
-  const int ok = EGifPutScreenDesc(encoder->file, encoder->width, encoder->height, 8, 0, global) != GIF_ERROR && GIFWriteLoop(encoder->file, (int) loops) == 1;
+  const int described = EGifPutScreenDesc(
+    encoder->file,
+    encoder->width,
+    encoder->height,
+    GIF_COLOR_RESOLUTION,
+    GIF_BACKGROUND_INDEX,
+    global
+  );
+
+  const int ok = described != GIF_ERROR && GIFWriteLoop(encoder->file, (int) loops) == 1;
 
   GifFreeMapObject(global);
 

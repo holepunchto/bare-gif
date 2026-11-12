@@ -65,6 +65,10 @@
 
 #define GIF_MAX_DIMENSION 0xffff
 
+#define GIF_COLOR_RESOLUTION 8
+
+#define GIF_BACKGROUND_INDEX 0
+
 typedef enum GIFDisposeMethod {
   GIF_DISPOSE_NONE,
   GIF_DISPOSE_BACKGROUND,

@@ -8,6 +8,7 @@
 
 #include "gif.h"
 
+#define GIF_MIN_COLORS 2
 #define GIF_MAX_COLORS 256
 
 #define GIF_ALPHA_THRESHOLD 128
