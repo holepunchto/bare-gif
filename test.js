@@ -252,6 +252,46 @@ test('encode() keeps every distinct colour it has room for', (t) => {
   t.is(countColors(decoded.data), countColors(image.data))
 })
 
+test('encode() spends no palette entry on a transparent pixel', (t) => {
+  const image = solid(8, 1, [0, 0, 0, 0])
+  const colours = [
+    [255, 0, 0],
+    [255, 127, 0],
+    [0, 255, 0],
+    [0, 0, 255]
+  ]
+
+  for (let i = 0; i < colours.length; i++) {
+    image.data[i * 4] = colours[i][0]
+    image.data[i * 4 + 1] = colours[i][1]
+    image.data[i * 4 + 2] = colours[i][2]
+    image.data[i * 4 + 3] = 255
+  }
+
+  const decoded = gif.decode(gif.encode(image, { colors: 5 }))
+
+  for (let i = 0; i < colours.length; i++) {
+    t.alike([...decoded.data.subarray(i * 4, i * 4 + 3)], colours[i])
+  }
+})
+
+test('decode() then encode() loses nothing', (t) => {
+  const decoded = gif.decodeAnimated(bufferfly)
+  const frames = [...decoded.frames]
+
+  const encoded = gif.encodeAnimated({
+    width: decoded.width,
+    height: decoded.height,
+    frames
+  })
+
+  const again = [...gif.decodeAnimated(encoded).frames]
+
+  for (let i = 0; i < frames.length; i++) {
+    t.ok(frames[i].data.equals(again[i].data), `frame ${i} is unchanged`)
+  }
+})
+
 test('encode() reduces the palette to the colours asked for', (t) => {
   const image = gradient(16, 16)
 
@@ -456,13 +496,13 @@ function solid(width, height, [red, green, blue, alpha]) {
   return { width, height, data }
 }
 
-// Colours are bucketed to 5 bits per channel before quantization, so every
-// step here survives as its own palette entry.
+// A plain ramp, so neighbouring colours fall in the same 5 bit bucket and only
+// an exact palette keeps them apart.
 function gradient(width, height) {
   const data = Buffer.alloc(width * height * 4)
 
   for (let i = 0; i < width * height; i++) {
-    data[i * 4] = (i % 8) * 32
+    data[i * 4] = i % 256
     data[i * 4 + 1] = 0
     data[i * 4 + 2] = 0
     data[i * 4 + 3] = 255
