@@ -524,6 +524,29 @@ typedef struct {
   int delay;
 } bare_gif_encoder_t;
 
+static inline int
+bare_gif__quantize_view(const uint8_t *data, int width, int height, int colors, GIFQuantized *const quantized) {
+  const size_t pixels = (size_t) width * (size_t) height;
+
+  uint32_t *aligned = NULL;
+
+  if (((uintptr_t) data & (sizeof(uint32_t) - 1)) != 0) {
+    aligned = malloc(pixels * sizeof(uint32_t));
+
+    if (aligned == NULL) return 0;
+
+    memcpy(aligned, data, pixels * sizeof(uint32_t));
+  }
+
+  const GIFPicture picture = {width, height, aligned ? aligned : (uint32_t *) data, width};
+
+  const int ok = GIFQuantize(&picture, colors, quantized);
+
+  free(aligned);
+
+  return ok;
+}
+
 static js_value_t *
 bare_gif_encode(js_env_t *env, js_callback_info_t *info) {
   int err;
@@ -552,11 +575,9 @@ bare_gif_encode(js_env_t *env, js_callback_info_t *info) {
   err = js_get_value_int64(env, argv[3], &colors);
   assert(err == 0);
 
-  const GIFPicture picture = {(int) width, (int) height, (uint32_t *) data, (int) width};
-
   GIFQuantized quantized;
 
-  if (GIFQuantize(&picture, (int) colors, &quantized) != 1) {
+  if (bare_gif__quantize_view(data, (int) width, (int) height, (int) colors, &quantized) != 1) {
     err = js_throw_error(env, NULL, "Out of memory");
     assert(err == 0);
 
@@ -764,11 +785,9 @@ bare_gif_animated_encoder_add_frame(js_env_t *env, js_callback_info_t *info) {
     return NULL;
   }
 
-  const GIFPicture picture = {encoder->width, encoder->height, (uint32_t *) data, encoder->width};
-
   GIFQuantized quantized;
 
-  if (GIFQuantize(&picture, (int) colors, &quantized) != 1) {
+  if (bare_gif__quantize_view(data, encoder->width, encoder->height, (int) colors, &quantized) != 1) {
     err = js_throw_error(env, NULL, "Out of memory");
     assert(err == 0);
 

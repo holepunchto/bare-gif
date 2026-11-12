@@ -288,7 +288,7 @@ test('decode() then encode() loses nothing', (t) => {
   const again = [...gif.decodeAnimated(encoded).frames]
 
   for (let i = 0; i < frames.length; i++) {
-    t.ok(frames[i].data.equals(again[i].data), `frame ${i} is unchanged`)
+    t.alike(frames[i].data, again[i].data, `frame ${i} is unchanged`)
   }
 })
 
@@ -317,6 +317,28 @@ test('encode() rejects an image with no pixels', (t) => {
 
 test('encode() rejects data shorter than its dimensions', (t) => {
   t.exception(() => gif.encode({ width: 4, height: 4, data: Buffer.alloc(8) }), /needs 64 bytes/i)
+})
+
+test('encode() reads a view that does not start on a word boundary', (t) => {
+  const image = solid(4, 4, [255, 0, 0, 255])
+  const skewed = skew(image.data)
+
+  t.is(skewed.byteOffset % 4, 1, 'the view really is off a word boundary')
+  t.alike(gif.encode({ width: 4, height: 4, data: skewed }), gif.encode(image))
+})
+
+test('encodeAnimated() reads a view that does not start on a word boundary', (t) => {
+  const image = solid(4, 4, [255, 0, 0, 255])
+
+  const encoded = gif.encodeAnimated({
+    width: 4,
+    height: 4,
+    frames: [{ data: skew(image.data), timestamp: 0 }]
+  })
+
+  const frame = [...gif.decodeAnimated(encoded).frames][0]
+
+  t.alike(frame.data, image.data)
 })
 
 test('encode() rejects data that is not a typed array', (t) => {
@@ -616,6 +638,14 @@ function gradient(width, height) {
   }
 
   return { width, height, data }
+}
+
+function skew(data) {
+  const padded = Buffer.alloc(data.byteLength + 1)
+
+  data.copy(padded, 1)
+
+  return padded.subarray(1)
 }
 
 function countColors(data) {
