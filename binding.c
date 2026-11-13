@@ -2,7 +2,9 @@
 #include <bare/module.h>
 #include <js.h>
 
+#include "buffer.h"
 #include "gif.h"
+#include "quantize.h"
 
 typedef struct {
   const uint8_t *data;
@@ -58,11 +60,18 @@ bare_gif__on_read(GifFileType *gif, GifByteType *data, int len) {
   }
 }
 
+static int
+bare_gif__on_write(GifFileType *gif, const GifByteType *data, int len) {
+  GIFBuffer *buffer = gif->UserData;
+
+  return GIFBufferWrite(buffer, data, len) ? len : 0;
+}
+
 static inline int
 bare_gif__decoder_init(js_env_t *env, bare_gif_decoder_t *decoder, const uint8_t *data, size_t len, int64_t max_pixels) {
   int err;
 
-  decoder->reader = (bare_gif_reader_t){data, len, 0};
+  decoder->reader = (bare_gif_reader_t) {data, len, 0};
 
   GifFileType *file = DGifOpen(&decoder->reader, bare_gif__on_read, &err);
 
@@ -500,6 +509,476 @@ bare_gif_animated_decoder_get_next_frame(js_env_t *env, js_callback_info_t *info
   return result;
 }
 
+typedef struct {
+  GIFBuffer buffer;
+
+  GifFileType *file;
+
+  int width;
+  int height;
+
+  GIFQuantized pending;
+  int64_t pending_timestamp;
+  bool has_pending;
+
+  int delay;
+} bare_gif_encoder_t;
+
+static inline int
+bare_gif__quantize_view(
+  const uint8_t *data,
+  int width,
+  int height,
+  int colors,
+  GIFQuantized *const quantized
+) {
+  const size_t pixels = (size_t) width * (size_t) height;
+
+  uint32_t *aligned = NULL;
+
+  if (((uintptr_t) data & (sizeof(uint32_t) - 1)) != 0) {
+    aligned = malloc(pixels * sizeof(uint32_t));
+
+    if (aligned == NULL) return 0;
+
+    memcpy(aligned, data, pixels * sizeof(uint32_t));
+  }
+
+  const GIFPicture picture = {width, height, aligned ? aligned : (uint32_t *) data, width};
+
+  const int ok = GIFQuantize(&picture, colors, quantized);
+
+  free(aligned);
+
+  return ok;
+}
+
+static js_value_t *
+bare_gif_encode(js_env_t *env, js_callback_info_t *info) {
+  int err;
+
+  size_t argc = 4;
+  js_value_t *argv[4];
+
+  err = js_get_callback_info(env, info, &argc, argv, NULL, NULL);
+  assert(err == 0);
+
+  assert(argc == 4);
+
+  uint8_t *data;
+  err = js_get_typedarray_info(env, argv[0], NULL, (void **) &data, NULL, NULL, NULL);
+  assert(err == 0);
+
+  int64_t width;
+  err = js_get_value_int64(env, argv[1], &width);
+  assert(err == 0);
+
+  int64_t height;
+  err = js_get_value_int64(env, argv[2], &height);
+  assert(err == 0);
+
+  int64_t colors;
+  err = js_get_value_int64(env, argv[3], &colors);
+  assert(err == 0);
+
+  GIFQuantized quantized;
+
+  if (bare_gif__quantize_view(data, (int) width, (int) height, (int) colors, &quantized) != 1) {
+    err = js_throw_error(env, NULL, "Out of memory");
+    assert(err == 0);
+
+    return NULL;
+  }
+
+  GIFBuffer buffer;
+  GIFBufferInit(&buffer);
+
+  GifFileType *file = EGifOpen(&buffer, bare_gif__on_write, &err);
+
+  if (file == NULL) goto err;
+
+  EGifSetGifVersion(file, true);
+
+  err = EGifPutScreenDesc(
+    file,
+    (int) width,
+    (int) height,
+    GIF_COLOR_RESOLUTION,
+    GIF_BACKGROUND_INDEX,
+    quantized.map
+  );
+
+  if (err == GIF_ERROR) goto err;
+
+  const int written = GIFWriteFrame(
+    file,
+    quantized.indices,
+    (int) width,
+    (int) height,
+    0,
+    quantized.transparent,
+    DISPOSAL_UNSPECIFIED,
+    NULL
+  );
+
+  if (written != 1) goto err;
+
+  if (EGifCloseFile(file, &err) == GIF_ERROR) {
+    file = NULL;
+
+    goto err;
+  }
+
+  GIFQuantizedFree(&quantized);
+
+  if (buffer.failed) {
+    GIFBufferFree(&buffer);
+
+    err = js_throw_error(env, NULL, "Encoded image could not be buffered");
+    assert(err == 0);
+
+    return NULL;
+  }
+
+  js_value_t *result;
+  err = js_create_external_arraybuffer(
+    env,
+    buffer.data,
+    buffer.len,
+    bare_gif__on_finalize,
+    NULL,
+    &result
+  );
+  assert(err == 0);
+
+  return result;
+
+err: {
+  const char *message = GIFGetError(file, err);
+
+  if (file) EGifCloseFile(file, &err);
+
+  GIFQuantizedFree(&quantized);
+  GIFBufferFree(&buffer);
+
+  err = js_throw_error(env, NULL, message);
+  assert(err == 0);
+
+  return NULL;
+}
+}
+
+static inline void
+bare_gif__encoder_drop_pending(bare_gif_encoder_t *encoder) {
+  GIFQuantizedFree(&encoder->pending);
+
+  encoder->has_pending = false;
+}
+
+static inline int
+bare_gif__encoder_flush_pending(bare_gif_encoder_t *encoder, int delay) {
+  if (!encoder->has_pending) return 1;
+
+  const int ok = GIFWriteFrame(
+    encoder->file,
+    encoder->pending.indices,
+    encoder->width,
+    encoder->height,
+    delay,
+    encoder->pending.transparent,
+    DISPOSE_BACKGROUND,
+    encoder->pending.map
+  );
+
+  bare_gif__encoder_drop_pending(encoder);
+
+  return ok;
+}
+
+static inline void
+bare_gif__encoder_release(bare_gif_encoder_t *encoder) {
+  int err;
+
+  if (encoder->file) {
+    EGifCloseFile(encoder->file, &err);
+
+    encoder->file = NULL;
+  }
+
+  bare_gif__encoder_drop_pending(encoder);
+
+  GIFBufferFree(&encoder->buffer);
+}
+
+static void
+bare_gif__on_finalize_encoder(js_env_t *env, void *data, void *finalize_hint) {
+  bare_gif_encoder_t *encoder = (bare_gif_encoder_t *) data;
+
+  bare_gif__encoder_release(encoder);
+
+  free(encoder);
+}
+
+static js_value_t *
+bare_gif_animated_encoder_init(js_env_t *env, js_callback_info_t *info) {
+  int err;
+
+  size_t argc = 3;
+  js_value_t *argv[3];
+
+  err = js_get_callback_info(env, info, &argc, argv, NULL, NULL);
+  assert(err == 0);
+
+  assert(argc == 3);
+
+  int64_t width;
+  err = js_get_value_int64(env, argv[0], &width);
+  assert(err == 0);
+
+  int64_t height;
+  err = js_get_value_int64(env, argv[1], &height);
+  assert(err == 0);
+
+  int64_t loops;
+  err = js_get_value_int64(env, argv[2], &loops);
+  assert(err == 0);
+
+  bare_gif_encoder_t *encoder = malloc(sizeof(bare_gif_encoder_t));
+  assert(encoder != NULL);
+
+  memset(encoder, 0, sizeof(*encoder));
+
+  encoder->width = (int) width;
+  encoder->height = (int) height;
+  encoder->pending.transparent = GIF_INDEX_INVALID;
+
+  GIFBufferInit(&encoder->buffer);
+
+  encoder->file = EGifOpen(&encoder->buffer, bare_gif__on_write, &err);
+
+  if (encoder->file == NULL) goto err;
+
+  EGifSetGifVersion(encoder->file, true);
+
+  ColorMapObject *global = GifMakeMapObject(GIF_MIN_COLORS, NULL);
+
+  if (global == NULL) {
+    bare_gif__encoder_release(encoder);
+
+    free(encoder);
+
+    err = js_throw_error(env, NULL, "Out of memory");
+    assert(err == 0);
+
+    return NULL;
+  }
+
+  const int described = EGifPutScreenDesc(
+    encoder->file,
+    encoder->width,
+    encoder->height,
+    GIF_COLOR_RESOLUTION,
+    GIF_BACKGROUND_INDEX,
+    global
+  );
+
+  const int ok = described != GIF_ERROR && GIFWriteLoop(encoder->file, (int) loops) == 1;
+
+  GifFreeMapObject(global);
+
+  if (!ok) goto err;
+
+  js_value_t *result;
+  err = js_create_external(env, (void *) encoder, bare_gif__on_finalize_encoder, NULL, &result);
+  assert(err == 0);
+
+  return result;
+
+err: {
+  const char *message = GIFGetError(encoder->file, err);
+
+  if (encoder->file) EGifCloseFile(encoder->file, &err);
+
+  GIFBufferFree(&encoder->buffer);
+
+  free(encoder);
+
+  err = js_throw_error(env, NULL, message);
+  assert(err == 0);
+
+  return NULL;
+}
+}
+
+static js_value_t *
+bare_gif_animated_encoder_add_frame(js_env_t *env, js_callback_info_t *info) {
+  int err;
+
+  size_t argc = 4;
+  js_value_t *argv[4];
+
+  err = js_get_callback_info(env, info, &argc, argv, NULL, NULL);
+  assert(err == 0);
+
+  assert(argc == 4);
+
+  bare_gif_encoder_t *encoder;
+  err = js_get_value_external(env, argv[0], (void **) &encoder);
+  assert(err == 0);
+
+  uint8_t *data;
+  err = js_get_typedarray_info(env, argv[1], NULL, (void **) &data, NULL, NULL, NULL);
+  assert(err == 0);
+
+  int64_t colors;
+  err = js_get_value_int64(env, argv[2], &colors);
+  assert(err == 0);
+
+  int64_t timestamp;
+  err = js_get_value_int64(env, argv[3], &timestamp);
+  assert(err == 0);
+
+  if (encoder->file == NULL) {
+    err = js_throw_error(env, NULL, "Encoder is no longer open");
+    assert(err == 0);
+
+    return NULL;
+  }
+
+  GIFQuantized quantized;
+
+  const int quantized_ok = bare_gif__quantize_view(
+    data,
+    encoder->width,
+    encoder->height,
+    (int) colors,
+    &quantized
+  );
+
+  if (quantized_ok != 1) {
+    err = js_throw_error(env, NULL, "Out of memory");
+    assert(err == 0);
+
+    return NULL;
+  }
+
+  if (encoder->has_pending) {
+    int64_t delay = (timestamp + 5) / 10 - (encoder->pending_timestamp + 5) / 10;
+
+    if (delay < 1) delay = 1;
+    if (delay > GIF_MAX_DELAY) delay = GIF_MAX_DELAY;
+
+    encoder->delay = (int) delay;
+
+    if (bare_gif__encoder_flush_pending(encoder, encoder->delay) != 1) {
+      GIFQuantizedFree(&quantized);
+
+      err = js_throw_error(env, NULL, GIFGetError(encoder->file, 0));
+      assert(err == 0);
+
+      return NULL;
+    }
+  }
+
+  encoder->pending = quantized;
+  encoder->pending_timestamp = timestamp;
+  encoder->has_pending = true;
+
+  return NULL;
+}
+
+static js_value_t *
+bare_gif_animated_encoder_assemble(js_env_t *env, js_callback_info_t *info) {
+  int err;
+
+  size_t argc = 1;
+  js_value_t *argv[1];
+
+  err = js_get_callback_info(env, info, &argc, argv, NULL, NULL);
+  assert(err == 0);
+
+  assert(argc == 1);
+
+  bare_gif_encoder_t *encoder;
+  err = js_get_value_external(env, argv[0], (void **) &encoder);
+  assert(err == 0);
+
+  if (encoder->file == NULL) {
+    err = js_throw_error(env, NULL, "Encoder is no longer open");
+    assert(err == 0);
+
+    return NULL;
+  }
+
+  const int delay = encoder->delay > 0 ? encoder->delay : GIF_DEFAULT_DELAY;
+
+  const int ok = bare_gif__encoder_flush_pending(encoder, delay);
+
+  GifFileType *file = encoder->file;
+
+  const char *message = ok ? NULL : GIFGetError(file, 0);
+
+  encoder->file = NULL;
+
+  if (EGifCloseFile(file, &err) == GIF_ERROR && message == NULL) {
+    message = GIFGetError(NULL, err);
+  }
+
+  if (message != NULL) {
+    GIFBufferFree(&encoder->buffer);
+
+    err = js_throw_error(env, NULL, message);
+    assert(err == 0);
+
+    return NULL;
+  }
+
+  if (encoder->buffer.failed) {
+    GIFBufferFree(&encoder->buffer);
+
+    err = js_throw_error(env, NULL, "Encoded animation could not be buffered");
+    assert(err == 0);
+
+    return NULL;
+  }
+
+  js_value_t *result;
+  err = js_create_external_arraybuffer(
+    env,
+    encoder->buffer.data,
+    encoder->buffer.len,
+    bare_gif__on_finalize,
+    NULL,
+    &result
+  );
+  assert(err == 0);
+
+  GIFBufferInit(&encoder->buffer);
+
+  return result;
+}
+
+static js_value_t *
+bare_gif_animated_encoder_destroy(js_env_t *env, js_callback_info_t *info) {
+  int err;
+
+  size_t argc = 1;
+  js_value_t *argv[1];
+
+  err = js_get_callback_info(env, info, &argc, argv, NULL, NULL);
+  assert(err == 0);
+
+  assert(argc == 1);
+
+  bare_gif_encoder_t *encoder;
+  err = js_get_value_external(env, argv[0], (void **) &encoder);
+  assert(err == 0);
+
+  bare_gif__encoder_release(encoder);
+
+  return NULL;
+}
+
 static js_value_t *
 bare_gif_exports(js_env_t *env, js_value_t *exports) {
   int err;
@@ -514,17 +993,33 @@ bare_gif_exports(js_env_t *env, js_value_t *exports) {
   }
 
   V("decode", bare_gif_decode)
+  V("encode", bare_gif_encode)
+
   V("animatedDecoderInit", bare_gif_animated_decoder_init)
   V("animatedDecoderGetInfo", bare_gif_animated_decoder_get_info)
   V("animatedDecoderGetNextFrame", bare_gif_animated_decoder_get_next_frame)
+
+  V("animatedEncoderInit", bare_gif_animated_encoder_init)
+  V("animatedEncoderAddFrame", bare_gif_animated_encoder_add_frame)
+  V("animatedEncoderAssemble", bare_gif_animated_encoder_assemble)
+  V("animatedEncoderDestroy", bare_gif_animated_encoder_destroy)
 #undef V
 
-  js_value_t *max_pixels;
-  err = js_create_int64(env, GIF_DEFAULT_MAX_PIXELS, &max_pixels);
-  assert(err == 0);
+#define V(name, n) \
+  { \
+    js_value_t *val; \
+    err = js_create_int64(env, n, &val); \
+    assert(err == 0); \
+    err = js_set_named_property(env, exports, name, val); \
+    assert(err == 0); \
+  }
 
-  err = js_set_named_property(env, exports, "defaultMaxPixels", max_pixels);
-  assert(err == 0);
+  V("defaultMaxPixels", GIF_DEFAULT_MAX_PIXELS)
+  V("maxFramePixels", GIF_MAX_FRAME_PIXELS)
+  V("maxColors", GIF_MAX_COLORS)
+  V("maxDimension", GIF_MAX_DIMENSION)
+  V("maxLoops", GIF_MAX_LOOPS)
+#undef V
 
   return exports;
 }

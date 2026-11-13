@@ -233,3 +233,464 @@ test('decode() rejects a header with no screen descriptor', (t) => {
 test('decodeAnimated() rejects a header with no screen descriptor', (t) => {
   t.exception(() => gif.decodeAnimated(headerOnly), /No screen descriptor/)
 })
+
+test('encode() round trips a solid image', (t) => {
+  const width = 8
+  const height = 4
+  const red = [255, 0, 0, 255]
+
+  const decoded = gif.decode(gif.encode(solid(width, height, red)))
+
+  t.is(decoded.width, width)
+  t.is(decoded.height, height)
+  t.alike([...decoded.data.subarray(0, red.length)], red)
+})
+
+test('encode() keeps every distinct colour it has room for', (t) => {
+  const image = gradient(16, 16)
+
+  const decoded = gif.decode(gif.encode(image))
+
+  t.is(countColors(decoded.data), countColors(image.data))
+})
+
+test('encode() spends no palette entry on a transparent pixel', (t) => {
+  const image = solid(8, 1, [0, 0, 0, 0])
+  const colours = [
+    [255, 0, 0],
+    [255, 127, 0],
+    [0, 255, 0],
+    [0, 0, 255]
+  ]
+
+  for (let i = 0; i < colours.length; i++) {
+    image.data[i * 4] = colours[i][0]
+    image.data[i * 4 + 1] = colours[i][1]
+    image.data[i * 4 + 2] = colours[i][2]
+    image.data[i * 4 + 3] = 255
+  }
+
+  const decoded = gif.decode(gif.encode(image, { colors: 5 }))
+
+  for (let i = 0; i < colours.length; i++) {
+    t.alike([...decoded.data.subarray(i * 4, i * 4 + 3)], colours[i])
+  }
+})
+
+test('decode() then encode() loses nothing', (t) => {
+  const decoded = gif.decodeAnimated(bufferfly)
+  const frames = [...decoded.frames]
+
+  const encoded = gif.encodeAnimated({
+    width: decoded.width,
+    height: decoded.height,
+    frames
+  })
+
+  const again = [...gif.decodeAnimated(encoded).frames]
+
+  for (let i = 0; i < frames.length; i++) {
+    t.alike(frames[i].data, again[i].data, `frame ${i} is unchanged`)
+  }
+})
+
+test('encode() keeps a full palette when a colour repeats after it fills', (t) => {
+  const colours = gif.maxColors
+
+  const data = Buffer.alloc((colours + 1) * 4)
+
+  for (let i = 0; i < colours; i++) {
+    data[i * 4] = i
+    data[i * 4 + 3] = 255
+  }
+
+  data[colours * 4 + 3] = 255
+
+  const decoded = gif.decode(gif.encode({ width: colours + 1, height: 1, data }))
+
+  t.is(countColors(decoded.data), colours)
+})
+
+test('encode() reduces the palette to the colours asked for', (t) => {
+  const image = gradient(16, 16)
+
+  const decoded = gif.decode(gif.encode(image, { colors: 4 }))
+
+  t.ok(countColors(decoded.data) <= 4)
+})
+
+test('encode() keeps a fully transparent pixel transparent', (t) => {
+  const blue = [0, 0, 255, 255]
+  const clear = [0, 0, 0, 0]
+
+  const image = solid(2, 1, blue)
+
+  image.data.set(clear, blue.length)
+
+  const decoded = gif.decode(gif.encode(image))
+
+  t.alike([...decoded.data.subarray(0, blue.length)], blue)
+  t.alike([...decoded.data.subarray(blue.length, 2 * blue.length)], clear)
+})
+
+test('encode() rejects an image with no pixels', (t) => {
+  t.exception(() => gif.encode(solid(0, 0, [0, 0, 0, 0])), /positive integers/i)
+})
+
+test('encode() rejects data shorter than its dimensions', (t) => {
+  t.exception(() => gif.encode({ width: 4, height: 4, data: Buffer.alloc(8) }), /needs 64 bytes/i)
+})
+
+test('encode() reads a view that does not start on a word boundary', (t) => {
+  const image = solid(4, 4, [255, 0, 0, 255])
+  const skewed = skew(image.data)
+
+  t.is(skewed.byteOffset % 4, 1, 'the view really is off a word boundary')
+  t.alike(gif.encode({ width: 4, height: 4, data: skewed }), gif.encode(image))
+})
+
+test('encodeAnimated() reads a view that does not start on a word boundary', (t) => {
+  const image = solid(4, 4, [255, 0, 0, 255])
+
+  const encoded = gif.encodeAnimated({
+    width: 4,
+    height: 4,
+    frames: [{ data: skew(image.data), timestamp: 0 }]
+  })
+
+  const frame = [...gif.decodeAnimated(encoded).frames][0]
+
+  t.alike(frame.data, image.data)
+})
+
+test('encode() rejects data that is not a typed array', (t) => {
+  for (const data of [
+    { byteLength: 16 },
+    [0, 0, 0, 0],
+    'xxxx',
+    new ArrayBuffer(16),
+    new DataView(new ArrayBuffer(16))
+  ]) {
+    t.exception(() => gif.encode({ width: 2, height: 2, data }), /must be a typed array/i)
+  }
+})
+
+test('encodeAnimated() releases the encoder when a frame is rejected', (t) => {
+  t.exception(
+    () =>
+      gif.encodeAnimated({
+        width: 2,
+        height: 2,
+        frames: [
+          { data: solid(2, 2, [255, 0, 0, 255]).data, timestamp: 0 },
+          { data: 'not a frame', timestamp: 100 }
+        ]
+      }),
+    /must be a typed array/i
+  )
+})
+
+test('the limits a caller can check against are the ones enforced', (t) => {
+  t.exception(
+    () => gif.encode(solid(1, 1, [0, 0, 0, 255]), { colors: gif.maxColors + 1 }),
+    new RegExp(`between 2 and ${gif.maxColors}`)
+  )
+
+  t.exception(
+    () => gif.encodeAnimated({ width: 1, height: 1, frames: [] }, { loops: gif.maxLoops + 1 }),
+    new RegExp(`between 0 and ${gif.maxLoops}`)
+  )
+
+  t.exception(
+    () =>
+      gif.encode({
+        width: gif.maxDimension + 1,
+        height: 1,
+        data: Buffer.alloc(4)
+      }),
+    new RegExp(`at most ${gif.maxDimension}`)
+  )
+})
+
+test('encode() rejects a colour count that is not a whole number in range', (t) => {
+  const image = solid(1, 1, [0, 0, 0, 255])
+
+  for (const colors of [NaN, '256', 1000, 1, 1.5, null]) {
+    t.exception(() => gif.encode(image, { colors }), /colors must be an integer between 2 and 256/)
+  }
+})
+
+test('encodeAnimated() rejects a loop count outside what a GIF records', (t) => {
+  const frames = [{ data: solid(1, 1, [0, 0, 0, 255]).data, timestamp: 0 }]
+
+  for (const loops of [65536, -1, NaN, 1.5]) {
+    t.exception(
+      () => gif.encodeAnimated({ width: 1, height: 1, frames }, { loops }),
+      /loops must be an integer between 0 and 65535/
+    )
+  }
+
+  t.execution(() => gif.encodeAnimated({ width: 1, height: 1, frames }, { loops: 65535 }))
+})
+
+test('encodeAnimated() rejects a timestamp that is not a whole number', (t) => {
+  for (const timestamp of ['100', NaN, -1, undefined]) {
+    t.exception(
+      () =>
+        gif.encodeAnimated({
+          width: 1,
+          height: 1,
+          frames: [{ data: solid(1, 1, [0, 0, 0, 255]).data, timestamp }]
+        }),
+      /timestamp must be an integer/
+    )
+  }
+})
+
+test('encodeAnimated() round trips frames and their timing', (t) => {
+  const width = 4
+  const height = 4
+  const colours = [
+    [255, 0, 0, 255],
+    [0, 255, 0, 255],
+    [0, 0, 255, 255]
+  ]
+  const timestamps = [0, 100, 200]
+
+  const encoded = gif.encodeAnimated({
+    width,
+    height,
+    frames: colours.map((colour, i) => ({
+      data: solid(width, height, colour).data,
+      timestamp: timestamps[i]
+    }))
+  })
+
+  const decoded = gif.decodeAnimated(encoded)
+  const frames = [...decoded.frames]
+
+  t.is(decoded.width, width)
+  t.is(decoded.height, height)
+  t.is(frames.length, colours.length)
+
+  for (let i = 0; i < colours.length; i++) {
+    t.alike([...frames[i].data.subarray(0, colours[i].length)], colours[i])
+    t.is(frames[i].timestamp, timestamps[i])
+  }
+})
+
+test('encode() stamps GIF89a, the version its extensions need', (t) => {
+  const still = gif.encode(solid(2, 2, [255, 0, 0, 255]))
+  const animated = gif.encodeAnimated({
+    width: 2,
+    height: 2,
+    frames: [{ data: solid(2, 2, [255, 0, 0, 255]).data, timestamp: 0 }]
+  })
+
+  t.is(still.subarray(0, 6).toString(), 'GIF89a')
+  t.is(animated.subarray(0, 6).toString(), 'GIF89a')
+})
+
+test('encodeAnimated() keeps a transparent frame transparent', (t) => {
+  const width = 2
+  const height = 1
+  const red = [255, 0, 0, 255]
+  const clear = [0, 0, 0, 0]
+
+  const encoded = gif.encodeAnimated({
+    width,
+    height,
+    frames: [
+      { data: solid(width, height, red).data, timestamp: 0 },
+      { data: solid(width, height, clear).data, timestamp: 100 }
+    ]
+  })
+
+  const frames = [...gif.decodeAnimated(encoded).frames]
+
+  t.alike([...frames[0].data.subarray(0, red.length)], red)
+  t.alike(
+    [...frames[1].data.subarray(0, clear.length)],
+    clear,
+    'the opaque frame is disposed before the transparent one'
+  )
+})
+
+test('encodeAnimated() keeps frame timing from drifting', (t) => {
+  const frame = solid(1, 1, [0, 0, 0, 255]).data
+  const timestamps = [0, 33, 67, 100, 133]
+
+  const encoded = gif.encodeAnimated({
+    width: 1,
+    height: 1,
+    frames: timestamps.map((timestamp) => ({ data: frame, timestamp }))
+  })
+
+  const decoded = [...gif.decodeAnimated(encoded).frames].map((f) => f.timestamp)
+
+  for (let i = 0; i < timestamps.length; i++) {
+    t.ok(Math.abs(decoded[i] - timestamps[i]) <= 5, `frame ${i} within 5ms`)
+  }
+})
+
+test('encodeAnimated() caps a delay at the widest the format records', (t) => {
+  const frame = solid(1, 1, [0, 0, 0, 255]).data
+
+  const encoded = gif.encodeAnimated({
+    width: 1,
+    height: 1,
+    frames: [
+      { data: frame, timestamp: 0 },
+      { data: frame, timestamp: 700000 }
+    ]
+  })
+
+  const decoded = [...gif.decodeAnimated(encoded).frames].map((f) => f.timestamp)
+
+  t.is(decoded[1], 0xffff * 10, 'clamped rather than wrapped')
+})
+
+test('encode() rejects a side wider than the format records', (t) => {
+  t.exception(
+    () => gif.encode({ width: 70000, height: 1, data: Buffer.alloc(280000) }),
+    /at most 65535/
+  )
+  t.exception(
+    () => gif.encode({ width: 1, height: 70000, data: Buffer.alloc(280000) }),
+    /at most 65535/
+  )
+})
+
+test('a budget that is not a whole number never passes for no budget', (t) => {
+  const frames = [{ data: solid(1, 1, [0, 0, 0, 255]).data, timestamp: 0 }]
+
+  for (const maxPixels of [null, NaN, '100', -1, 1.5]) {
+    t.exception(
+      () => [...gif.decodeAnimated(bufferfly, { maxPixels }).frames],
+      /maxPixels must be an integer/
+    )
+
+    t.exception(
+      () => gif.encodeAnimated({ width: 1, height: 1, frames }, { maxPixels }),
+      /maxPixels must be an integer/
+    )
+  }
+
+  t.is(
+    [...gif.decodeAnimated(bufferfly, { maxPixels: 0 }).frames].length,
+    22,
+    'zero still lifts the budget on purpose'
+  )
+
+  t.execution(() => gif.encodeAnimated({ width: 1, height: 1, frames }, { maxPixels: 0 }))
+})
+
+test('encodeAnimated() stops at the budget its own decoder honours', (t) => {
+  const frames = Array.from({ length: 100 }, (_, i) => ({
+    data: Buffer.alloc(1024 * 1024 * 4),
+    timestamp: i * 100
+  }))
+
+  t.exception(
+    () => gif.encodeAnimated({ width: 1024, height: 1024, frames }),
+    /Animation exceeds the maximum/
+  )
+
+  t.execution(
+    () =>
+      gif.encodeAnimated({ width: 1024, height: 1024, frames }, { maxPixels: 200 * 1024 * 1024 }),
+    'the budget lifts the same way it does on decode'
+  )
+})
+
+test('encodeAnimated() rejects an animation with no frames', (t) => {
+  t.exception(() => gif.encodeAnimated({ width: 4, height: 4, frames: [] }), /at least one frame/)
+
+  t.exception(
+    () => gif.encodeAnimated({ width: 4, height: 4, frames: [][Symbol.iterator]() }),
+    /at least one frame/,
+    'an exhausted iterator is caught too'
+  )
+})
+
+test('encodeAnimated() rejects a frame smaller than the canvas', (t) => {
+  t.exception(
+    () =>
+      gif.encodeAnimated({
+        width: 4,
+        height: 4,
+        frames: [{ data: solid(2, 2, [0, 0, 0, 255]).data, timestamp: 0 }]
+      }),
+    /needs 64 bytes/i
+  )
+})
+
+test('encode() rejects a canvas beyond the pixel budget', (t) => {
+  t.exception(
+    () => gif.encode({ width: 1 << 15, height: 1 << 15, data: Buffer.alloc(0) }),
+    /maximum of \d+ pixels/i
+  )
+})
+
+test('encodeAnimated() round trips a real animation', (t) => {
+  const decoded = gif.decodeAnimated(bufferfly)
+  const frames = [...decoded.frames]
+
+  const encoded = gif.encodeAnimated({
+    width: decoded.width,
+    height: decoded.height,
+    frames
+  })
+
+  const again = gif.decodeAnimated(encoded)
+  const round = [...again.frames]
+
+  t.is(again.width, decoded.width)
+  t.is(again.height, decoded.height)
+  t.is(round.length, frames.length)
+  t.is(round[1].timestamp, frames[1].timestamp)
+})
+
+function solid(width, height, [red, green, blue, alpha]) {
+  const data = Buffer.alloc(width * height * 4)
+
+  for (let i = 0; i < data.byteLength; i += 4) {
+    data[i] = red
+    data[i + 1] = green
+    data[i + 2] = blue
+    data[i + 3] = alpha
+  }
+
+  return { width, height, data }
+}
+
+function gradient(width, height) {
+  const data = Buffer.alloc(width * height * 4)
+
+  for (let i = 0; i < width * height; i++) {
+    data[i * 4] = i % 256
+    data[i * 4 + 1] = 0
+    data[i * 4 + 2] = 0
+    data[i * 4 + 3] = 255
+  }
+
+  return { width, height, data }
+}
+
+function skew(data) {
+  const padded = Buffer.alloc(data.byteLength + 1)
+
+  data.copy(padded, 1)
+
+  return padded.subarray(1)
+}
+
+function countColors(data) {
+  const seen = new Set()
+
+  for (let i = 0; i < data.byteLength; i += 4) {
+    seen.add(data.readUInt32LE(i))
+  }
+
+  return seen.size
+}

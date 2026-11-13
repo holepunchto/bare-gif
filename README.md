@@ -14,15 +14,11 @@ const gif = require('bare-gif')
 const image = require('./my-image.gif', { with: { type: 'binary' } })
 
 const decoded = gif.decodeAnimated(image)
-// {
-//   width: 200,
-//   height: 400,
-//   frames: [
-//     { width: 200, height: 400, timestamp: 0, data: <Buffer> },
-//     ...
-//   ]
-// }
 ```
+
+## API
+
+See the [`bare-gif` reference](https://docs.pears.com/reference/bare/modules/bare-gif).
 
 ## License
 
