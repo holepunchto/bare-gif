@@ -524,6 +524,59 @@ typedef struct {
   int delay;
 } bare_gif_encoder_t;
 
+static inline bool
+bare_gif__is_valid_canvas(int64_t width, int64_t height) {
+  return width > 0 && height > 0 && width <= GIF_MAX_DIMENSION && height <= GIF_MAX_DIMENSION && (uint64_t) width * height <= GIF_MAX_FRAME_PIXELS;
+}
+
+static inline bool
+bare_gif__is_valid_color_count(int64_t colors) {
+  return colors >= GIF_MIN_COLORS && colors <= GIF_MAX_COLORS;
+}
+
+static inline size_t
+bare_gif__typedarray_element_size(js_typedarray_type_t type) {
+  switch (type) {
+  case js_int8array:
+  case js_uint8array:
+  case js_uint8clampedarray:
+    return 1;
+  case js_int16array:
+  case js_uint16array:
+  case js_float16array:
+    return 2;
+  case js_int32array:
+  case js_uint32array:
+  case js_float32array:
+    return 4;
+  case js_float64array:
+  case js_bigint64array:
+  case js_biguint64array:
+    return 8;
+  }
+
+  return 0;
+}
+
+static inline int
+bare_gif__get_pixels(js_env_t *env, js_value_t *value, int width, int height, uint8_t **data) {
+  int err;
+
+  js_typedarray_type_t type;
+  size_t len;
+  err = js_get_typedarray_info(env, value, &type, (void **) data, &len, NULL, NULL);
+  assert(err == 0);
+
+  if (len * bare_gif__typedarray_element_size(type) < (size_t) width * height * 4) {
+    err = js_throw_error(env, NULL, "Image data is shorter than its dimensions");
+    assert(err == 0);
+
+    return -1;
+  }
+
+  return 0;
+}
+
 static inline int
 bare_gif__quantize_view(
   const uint8_t *data,
@@ -565,10 +618,6 @@ bare_gif_encode(js_env_t *env, js_callback_info_t *info) {
 
   assert(argc == 4);
 
-  uint8_t *data;
-  err = js_get_typedarray_info(env, argv[0], NULL, (void **) &data, NULL, NULL, NULL);
-  assert(err == 0);
-
   int64_t width;
   err = js_get_value_int64(env, argv[1], &width);
   assert(err == 0);
@@ -580,6 +629,24 @@ bare_gif_encode(js_env_t *env, js_callback_info_t *info) {
   int64_t colors;
   err = js_get_value_int64(env, argv[3], &colors);
   assert(err == 0);
+
+  if (!bare_gif__is_valid_canvas(width, height)) {
+    err = js_throw_error(env, NULL, "Invalid GIF dimensions");
+    assert(err == 0);
+
+    return NULL;
+  }
+
+  if (!bare_gif__is_valid_color_count(colors)) {
+    err = js_throw_error(env, NULL, "Invalid GIF color count");
+    assert(err == 0);
+
+    return NULL;
+  }
+
+  uint8_t *data;
+  err = bare_gif__get_pixels(env, argv[0], (int) width, (int) height, &data);
+  if (err < 0) return NULL;
 
   GIFQuantized quantized;
 
@@ -743,6 +810,20 @@ bare_gif_animated_encoder_init(js_env_t *env, js_callback_info_t *info) {
   err = js_get_value_int64(env, argv[2], &loops);
   assert(err == 0);
 
+  if (!bare_gif__is_valid_canvas(width, height)) {
+    err = js_throw_error(env, NULL, "Invalid GIF dimensions");
+    assert(err == 0);
+
+    return NULL;
+  }
+
+  if (loops < 0 || loops > GIF_MAX_LOOPS) {
+    err = js_throw_error(env, NULL, "Invalid GIF loop count");
+    assert(err == 0);
+
+    return NULL;
+  }
+
   bare_gif_encoder_t *encoder = malloc(sizeof(bare_gif_encoder_t));
   assert(encoder != NULL);
 
@@ -826,10 +907,6 @@ bare_gif_animated_encoder_add_frame(js_env_t *env, js_callback_info_t *info) {
   err = js_get_value_external(env, argv[0], (void **) &encoder);
   assert(err == 0);
 
-  uint8_t *data;
-  err = js_get_typedarray_info(env, argv[1], NULL, (void **) &data, NULL, NULL, NULL);
-  assert(err == 0);
-
   int64_t colors;
   err = js_get_value_int64(env, argv[2], &colors);
   assert(err == 0);
@@ -844,6 +921,17 @@ bare_gif_animated_encoder_add_frame(js_env_t *env, js_callback_info_t *info) {
 
     return NULL;
   }
+
+  if (!bare_gif__is_valid_color_count(colors)) {
+    err = js_throw_error(env, NULL, "Invalid GIF color count");
+    assert(err == 0);
+
+    return NULL;
+  }
+
+  uint8_t *data;
+  err = bare_gif__get_pixels(env, argv[1], encoder->width, encoder->height, &data);
+  if (err < 0) return NULL;
 
   GIFQuantized quantized;
 

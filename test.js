@@ -68,6 +68,12 @@ const notAGIF = Buffer.from('this is not a gif')
 const tooShort = [Buffer.alloc(0), Buffer.from('GIF8')]
 const headerOnly = Buffer.from('GIF89a')
 
+class MisreportedLength extends Uint8Array {
+  get byteLength() {
+    return 1 << 30
+  }
+}
+
 test('decode .gif', (t) => {
   t.comment(gif.decode(bufferfly))
 })
@@ -341,6 +347,13 @@ test('encode() rejects data shorter than its dimensions', (t) => {
   t.exception(() => gif.encode({ width: 4, height: 4, data: Buffer.alloc(8) }), /needs 64 bytes/i)
 })
 
+test('encode() rejects data that misreports its length', (t) => {
+  t.exception(
+    () => gif.encode({ width: 64, height: 64, data: new MisreportedLength(16) }),
+    /shorter than its dimensions/i
+  )
+})
+
 test('encode() reads a view that does not start on a word boundary', (t) => {
   const image = solid(4, 4, [255, 0, 0, 255])
   const skewed = skew(image.data)
@@ -600,6 +613,18 @@ test('encodeAnimated() rejects a frame smaller than the canvas', (t) => {
         frames: [{ data: solid(2, 2, [0, 0, 0, 255]).data, timestamp: 0 }]
       }),
     /needs 64 bytes/i
+  )
+})
+
+test('encodeAnimated() rejects a frame that misreports its length', (t) => {
+  t.exception(
+    () =>
+      gif.encodeAnimated({
+        width: 64,
+        height: 64,
+        frames: [{ data: new MisreportedLength(16), timestamp: 0 }]
+      }),
+    /shorter than its dimensions/i
   )
 })
 
