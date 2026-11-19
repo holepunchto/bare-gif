@@ -1,11 +1,5 @@
 const binding = require('./binding')
 
-exports.maxColors = binding.maxColors
-exports.maxDimension = binding.maxDimension
-exports.maxLoops = binding.maxLoops
-exports.maxFramePixels = binding.maxFramePixels
-exports.defaultMaxPixels = binding.defaultMaxPixels
-
 exports.decode = function decode(image) {
   const { width, height, data } = binding.decode(image)
 

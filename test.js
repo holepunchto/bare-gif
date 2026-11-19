@@ -295,7 +295,7 @@ test('decode() then encode() loses nothing', (t) => {
 })
 
 test('encode() keeps a full palette when a colour repeats after it fills', (t) => {
-  const colours = gif.maxColors
+  const colours = 256
 
   const data = Buffer.alloc((colours + 1) * 4)
 
@@ -387,28 +387,6 @@ test('encodeAnimated() releases the encoder when a frame is rejected', (t) => {
         ]
       }),
     /must be a typed array/i
-  )
-})
-
-test('the limits a caller can check against are the ones enforced', (t) => {
-  t.exception(
-    () => gif.encode(solid(1, 1, [0, 0, 0, 255]), { colors: gif.maxColors + 1 }),
-    new RegExp(`between 2 and ${gif.maxColors}`)
-  )
-
-  t.exception(
-    () => gif.encodeAnimated({ width: 1, height: 1, frames: [] }, { loops: gif.maxLoops + 1 }),
-    new RegExp(`between 0 and ${gif.maxLoops}`)
-  )
-
-  t.exception(
-    () =>
-      gif.encode({
-        width: gif.maxDimension + 1,
-        height: 1,
-        data: Buffer.alloc(4)
-      }),
-    new RegExp(`at most ${gif.maxDimension}`)
   )
 })
 

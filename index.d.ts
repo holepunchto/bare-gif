@@ -42,28 +42,28 @@ interface GIFSourceAnimation {
 interface GIFDecodeAnimatedOptions {
   /**
    * Pixels one decode may produce in total, or `0` for no budget.
-   * @default defaultMaxPixels
+   * @default 67108864
    */
   maxPixels?: number
 }
 
 interface GIFEncodeOptions {
   /**
-   * Palette entries, from `2` to `maxColors`.
-   * @default maxColors
+   * Palette entries, from `2` to `256`.
+   * @default 256
    */
   colors?: number
 }
 
 interface GIFEncodeAnimatedOptions extends GIFEncodeOptions {
   /**
-   * Times to repeat the animation, from `0` to `maxLoops`. `0` loops forever.
+   * Times to repeat the animation, from `0` to `65535`. `0` loops forever.
    * @default 0
    */
   loops?: number
   /**
    * Pixels the whole animation may hold, or `0` for no budget.
-   * @default defaultMaxPixels
+   * @default 67108864
    */
   maxPixels?: number
 }
@@ -87,7 +87,7 @@ declare function decodeAnimated(image: Buffer, opts?: GIFDecodeAnimatedOptions):
 /**
  * Encode RGBA pixels as a GIF.
  *
- * A GIF is palette based, so the colours are reduced to at most `maxColors` entries. An image that
+ * A GIF is palette based, so the colours are reduced to at most 256 entries. An image that
  * already fits a palette keeps its colours exactly. It has no alpha channel either, only a
  * transparent palette index, so a pixel with an alpha below 128 becomes fully transparent and every
  * other pixel becomes fully opaque.
@@ -113,31 +113,11 @@ declare function encode(image: GIFImage, opts?: GIFEncodeOptions): Buffer
  */
 declare function encodeAnimated(image: GIFSourceAnimation, opts?: GIFEncodeAnimatedOptions): Buffer
 
-/** Palette entries one colour map holds. */
-declare const maxColors: number
-
-/** The widest a screen or image field records. */
-declare const maxDimension: number
-
-/** The most repeats a loop record holds. */
-declare const maxLoops: number
-
-/** Pixels one image may hold. */
-declare const maxFramePixels: number
-
-/** Default budget for a whole decode or animation. */
-declare const defaultMaxPixels: number
-
 export {
   decode,
   decodeAnimated,
   encode,
   encodeAnimated,
-  maxColors,
-  maxDimension,
-  maxLoops,
-  maxFramePixels,
-  defaultMaxPixels,
   type GIFImage,
   type GIFFrame,
   type GIFAnimation,
