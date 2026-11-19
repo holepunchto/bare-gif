@@ -28,6 +28,8 @@
 // (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+#pragma once
+
 #include <assert.h>
 #include <gif_lib.h>
 #include <stdio.h>
@@ -54,6 +56,22 @@
 // retain what they are handed. A frame count is cheap to inflate in the file,
 // so the per-frame cap alone leaves the total unbounded.
 #define GIF_DEFAULT_MAX_PIXELS (1ULL << 26)
+
+#define GIF_DEFAULT_DELAY 10
+
+#define GIF_MAX_DELAY 0xffff
+
+#define GIF_MAX_LOOPS 0xffff
+
+#define GIF_LOOP_EXTENSION     "NETSCAPE2.0"
+#define GIF_LOOP_EXTENSION_LEN (sizeof(GIF_LOOP_EXTENSION) - 1)
+#define GIF_LOOP_SUB_BLOCK     1
+
+#define GIF_MAX_DIMENSION 0xffff
+
+#define GIF_COLOR_RESOLUTION 8
+
+#define GIF_BACKGROUND_INDEX 0
 
 typedef enum GIFDisposeMethod {
   GIF_DISPOSE_NONE,
@@ -384,4 +402,53 @@ GIFGetError(const GifFileType *const gif, int error) {
   const char *message = GifErrorString(gif == NULL ? error : gif->Error);
   if (message == NULL) message = "Unknown error";
   return message;
+}
+
+static int
+GIFWriteLoop(GifFileType *const gif, int loops) {
+  const GifByteType name[] = GIF_LOOP_EXTENSION;
+
+  const GifByteType block[] = {GIF_LOOP_SUB_BLOCK, loops & 0xff, (loops >> 8) & 0xff};
+
+  if (EGifPutExtensionLeader(gif, APPLICATION_EXT_FUNC_CODE) == GIF_ERROR) return 0;
+  if (EGifPutExtensionBlock(gif, GIF_LOOP_EXTENSION_LEN, name) == GIF_ERROR) return 0;
+  if (EGifPutExtensionBlock(gif, sizeof(block), block) == GIF_ERROR) return 0;
+  if (EGifPutExtensionTrailer(gif) == GIF_ERROR) return 0;
+
+  return 1;
+}
+
+static int
+GIFWriteFrame(
+  GifFileType *const gif,
+  const uint8_t *const indices,
+  int width,
+  int height,
+  int delay,
+  int transparent,
+  int dispose,
+  ColorMapObject *const map
+) {
+  if (delay > 0 || transparent != GIF_INDEX_INVALID || dispose != DISPOSAL_UNSPECIFIED) {
+    const GraphicsControlBlock gcb = {
+      .DisposalMode = dispose,
+      .UserInputFlag = false,
+      .DelayTime = delay,
+      .TransparentColor = transparent
+    };
+
+    GifByteType extension[4];
+
+    const size_t len = EGifGCBToExtension(&gcb, extension);
+
+    if (EGifPutExtension(gif, GRAPHICS_EXT_FUNC_CODE, (int) len, extension) == GIF_ERROR) return 0;
+  }
+
+  if (EGifPutImageDesc(gif, 0, 0, width, height, false, map) == GIF_ERROR) return 0;
+
+  for (int y = 0; y < height; y++) {
+    if (EGifPutLine(gif, (GifPixelType *) indices + (size_t) y * width, width) == GIF_ERROR) return 0;
+  }
+
+  return 1;
 }

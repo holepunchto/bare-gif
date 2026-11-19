@@ -4,12 +4,19 @@
   "description": "GIF support for Bare",
   "exports": {
     "./package": "./package.json",
-    ".": "./index.js"
+    ".": {
+      "types": "./index.d.ts",
+      "default": "./index.js"
+    }
   },
   "files": [
     "index.js",
+    "index.d.ts",
+    "buffer.h",
     "gif.h",
+    "quantize.h",
     "binding.c",
+    "patches",
     "binding.js",
     "CMakeLists.txt",
     "prebuilds"
@@ -31,6 +38,7 @@
   },
   "homepage": "https://github.com/holepunchto/bare-gif#readme",
   "devDependencies": {
+    "bare-buffer": "^3.0.1",
     "brittle": "^3.4.0",
     "cmake-bare": "^1.10.1",
     "cmake-fetch": "^1.4.6",

@@ -1,0 +1,13 @@
+diff --git a/quantize.c b/quantize.c
+index 1194876..ae6be87 100644
+--- a/quantize.c
++++ b/quantize.c
+@@ -25,7 +25,7 @@ SPDX-License-Identifier: MIT
+ #define BITS_PER_PRIM_COLOR 5
+ #define MAX_PRIM_COLOR 0x1f
+ 
+-static int SortRGBAxis;
++static _Thread_local int SortRGBAxis;
+ 
+ typedef struct QuantizedColorType {
+ 	GifByteType RGB[3];
